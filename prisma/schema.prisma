@@ -1,0 +1,71 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CUSTOMER
+  VENDOR
+  BUSINESS
+  ADMIN
+}
+
+enum RegistrationType {
+  BUYER
+  SELLER
+  BUSINESS
+}
+
+enum AuthProvider {
+  PHONE
+  GOOGLE
+  APPLE
+  FACEBOOK
+}
+
+model User{
+  id String @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  firstName String?
+  lastName String?
+
+  email String? @unique
+  phone String? @unique
+  authProvider AuthProvider?
+
+  registrationType RegistrationType?
+
+  role UserRole @default(CUSTOMER)
+
+  isVerified Boolean @default(false)
+  isActive Boolean @default(true)
+
+  @@index([email])
+  @@index([phone])
+  @@index([registrationType])
+  @@index([role])
+}
+
+model PhoneOtp{
+  id String @id @default(cuid())
+  phone String 
+  codeHash String
+  expiresAt DateTime
+  attempts Int @default(0)
+  verified Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
