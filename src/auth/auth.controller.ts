@@ -9,29 +9,20 @@ import { RegisterDto } from "./dto/register.dto";
 export class AuthController {
     constructor(
         private readonly authService: AuthService,
-    ) {}
+    ) { }
 
     // ============================================================
     // PHONE OTP
     // ============================================================
 
     @Post("phone/send-otp")
-    async sendPhoneOtp(
-        @Body() dto: SendPhoneOtpDto,
-    ) {
-        return this.authService.sendPhoneOtp(
-            dto.phone,
-        );
+    async sendPhoneOtp(@Body() dto: SendPhoneOtpDto,) {
+        return this.authService.sendPhoneOtp(dto.phone,);
     }
 
     @Post("phone/verify-otp")
-    async verifyPhoneOtp(
-        @Body() dto: VerifyPhoneOtpDto,
-    ) {
-        return this.authService.verifyPhoneOtp(
-            dto.phone,
-            dto.code,
-        );
+    async verifyPhoneOtp(@Body() dto: VerifyPhoneOtpDto,) {
+        return this.authService.verifyPhoneOtp(dto.phone, dto.code,);
     }
 
     // ============================================================
@@ -39,9 +30,7 @@ export class AuthController {
     // ============================================================
 
     @Post("register")
-    async register(
-        @Body() dto: RegisterDto,
-    ) {
+    async register(@Body() dto: RegisterDto,) {
         return this.authService.register(dto);
     }
 
@@ -50,9 +39,7 @@ export class AuthController {
     // ============================================================
 
     @Post("login")
-    async login(
-        @Body() dto: LoginDto,
-    ) {
+    async login(@Body() dto: LoginDto,) {
         return this.authService.login(dto);
     }
 }

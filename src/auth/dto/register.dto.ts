@@ -1,17 +1,29 @@
-import { IsNotEmpty, IsString } from "class-validator";
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MinLength } from "class-validator";
+import { RegistrationType } from "generated/prisma/enums";
 
-export class RegisterDto{
+export class RegisterDto {
     @IsString()
     @IsNotEmpty()
     phone!: string;
 
-
+    @IsString()
+    @IsNotEmpty()
+    firstName!: string;
 
     @IsString()
     @IsNotEmpty()
-    fullName!: string;
-    
-    @IsString()
+    lastName!: string;
+
+
+    @IsOptional()
+    @IsEmail()
+    email?: string;
+
+   @IsEnum(RegistrationType)
+    registrationType!: RegistrationType;
+
     @IsNotEmpty()
-    accountType!: string;
+    @IsString()
+    @MinLength(8)
+    password!: string;
 }
