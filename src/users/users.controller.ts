@@ -17,12 +17,12 @@ export class UsersController {
     }
 
     @Get(":id")
-    findUser(@Param(":id") id: string) {
-        return this.userService.findByPhone(id);
+    findUser(@Param("id") id: string) {
+        return this.userService.findUser(id);
     }
 
     @Patch(":id")
-    updateUser(@Param(":id") id: string, @Body() updateUserDto: UpdateUserDto) {
+    updateUser(@Param("id") id: string, @Body() updateUserDto: UpdateUserDto) {
         return this.userService.updateUser(id, updateUserDto,);
     }
     @Delete(":id")

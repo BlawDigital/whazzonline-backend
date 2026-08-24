@@ -40,6 +40,11 @@ model User{
 
   firstName String?
   lastName String?
+  dateOfBirth String?
+  address String?
+  city String?
+  state String?
+  countryCode String?
 
   email String? @unique
   passwordHash String?

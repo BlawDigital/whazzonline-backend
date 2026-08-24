@@ -91,10 +91,21 @@ export class OtpService {
                     },
                 },
             });
-            return {
-                message:" Phone number verified successfully.",
+            throw new BadRequestException("The verification code is incorrect.");
+        }
+
+        await this.prisma.phoneOtp.update({
+            where: {
+                id: otpRecord.id,
+            },
+            data: {
                 verified: true,
-            };
+            },
+        });
+
+        return {
+            message: "Phone number verified successfully.",
+            verified: true,
         };
     }
 }

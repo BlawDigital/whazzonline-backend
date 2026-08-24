@@ -21,7 +21,15 @@ export class AuthService {
     }
 
     async verifyPhoneOtp(phone: string, code: string) {
-        return this.otpService.verifyPhoneOtp(phone, code);
+        const verification = await this.otpService.verifyPhoneOtp(phone, code);
+        const user = await this.prisma.user.findUnique({
+            where: { phone: phone.trim() },
+        });
+
+        return {
+            ...verification,
+            user: user ? this.toPublicUser(user) : null,
+        };
     }
 
     // ============================================================
@@ -84,24 +92,15 @@ export class AuthService {
         }
 
         // Hash password
-        const passwordHash = await bcrypt.hash(password, 12);
+        const passwordHash = password ? await bcrypt.hash(password, 12) : null;
 
         // Determine role
-        let role: "CUSTOMER" | "VENDOR" | "BUSINESS";
-
-        switch (registrationType) {
-            case "BUYER":
-                role = "CUSTOMER";
-                break;
-
-            case "SELLER":
-                role = "VENDOR";
-                break;
-
-            case "BUSINESS":
-                role = "BUSINESS";
-                break;
-        }
+        const roleByRegistrationType = {
+            BUYER: "CUSTOMER",
+            SELLER: "VENDOR",
+            BUSINESS: "BUSINESS",
+        } as const;
+        const role = roleByRegistrationType[registrationType];
 
         // Create account
         const user = await this.prisma.user.create({
@@ -120,7 +119,7 @@ export class AuthService {
 
         return {
             message: "Account created successfully.",
-            user,
+            user: this.toPublicUser(user),
         };
     }
 
@@ -177,7 +176,12 @@ export class AuthService {
 
         return {
             message: "Login successful.",
-            user,
+            user: this.toPublicUser(user),
         };
+    }
+
+    private toPublicUser<T extends { passwordHash: unknown }>(user: T) {
+        const { passwordHash: _passwordHash, ...publicUser } = user;
+        return publicUser;
     }
 }

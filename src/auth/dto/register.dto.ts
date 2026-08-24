@@ -6,13 +6,15 @@ export class RegisterDto {
     @IsNotEmpty()
     phone!: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    firstName!: string;
+    @MinLength(2)
+    firstName?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    lastName!: string;
+    @MinLength(2)
+    lastName?: string;
 
 
     @IsOptional()
@@ -22,8 +24,8 @@ export class RegisterDto {
    @IsEnum(RegistrationType)
     registrationType!: RegistrationType;
 
-    @IsNotEmpty()
+    @IsOptional()
     @IsString()
     @MinLength(8)
-    password!: string;
+    password?: string;
 }

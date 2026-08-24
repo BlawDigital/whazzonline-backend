@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: whazzonline-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: whazzonline
+      POSTGRES_USER: whazzonline
+      POSTGRES_PASSWORD: whazzonline_dev_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - whazzonline-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whazzonline -d whazzonline"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  whazzonline-postgres-data:

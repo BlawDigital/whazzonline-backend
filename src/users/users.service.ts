@@ -35,17 +35,19 @@ export class UsersService {
                 );
             }
         }
-        return this.prisma.user.create({
+        const user = await this.prisma.user.create({
             data: createUserDto,
         });
+        return this.toPublicUser(user);
     }
 
     async findAllUsers() {
-        return this.prisma.user.findMany({
+        const users = await this.prisma.user.findMany({
             orderBy: {
                 createdAt: "desc",
             },
         });
+        return users.map((user) => this.toPublicUser(user));
     }
     async findUser(id: string) {
         const user = await this.prisma.user.findUnique({
@@ -56,40 +58,49 @@ export class UsersService {
         if (!user) {
             throw new NotFoundException("User not found.");
         }
-        return user;
+        return this.toPublicUser(user);
     }
     async findByEmail(email: string) {
-        return this.prisma.user.findUnique({
+        const user = await this.prisma.user.findUnique({
             where: {
                 email,
             },
         });
+        return user ? this.toPublicUser(user) : null;
     }
 
     async findByPhone(phone: string) {
-        return this.prisma.user.findUnique({
+        const user = await this.prisma.user.findUnique({
             where: {
                 phone,
             },
         });
+        return user ? this.toPublicUser(user) : null;
     }
 
     async updateUser(id: string, UpdateUserDto: UpdateUserDto,) {
         await this.findUser(id);
 
-        return this.prisma.user.update({
+        const user = await this.prisma.user.update({
             where: {
                 id,
             },
             data: UpdateUserDto,
         });
+        return this.toPublicUser(user);
     }
     async removeUser(id: string) {
         await this.findUser(id);
-        return this.prisma.user.delete({
+        const user = await this.prisma.user.delete({
             where: {
                 id,
             },
         });
+        return this.toPublicUser(user);
+    }
+
+    private toPublicUser<T extends { passwordHash: unknown }>(user: T) {
+        const { passwordHash: _passwordHash, ...publicUser } = user;
+        return publicUser;
     }
 }
