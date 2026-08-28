@@ -35,6 +35,7 @@ export class AuthService {
         const verification = await this.otpService.verifyPhoneOtp(phone, code);
         const user = await this.prisma.user.findUnique({
             where: { phone: phone.trim() },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
         });
 
         return {
@@ -175,11 +176,13 @@ export class AuthService {
                 where: {
                     email,
                 },
+                include: { vendorProfile: { select: { setupCompleted: true } } },
             })
             : await this.prisma.user.findUnique({
                 where: {
                     phone,
                 },
+                include: { vendorProfile: { select: { setupCompleted: true } } },
             });
 
         if (!user) {
@@ -213,9 +216,15 @@ export class AuthService {
         };
     }
 
-    private toPublicUser<T extends { passwordHash: unknown }>(user: T) {
-        const { passwordHash: _passwordHash, ...publicUser } = user;
-        return publicUser;
+    private toPublicUser<T extends {
+        passwordHash: unknown;
+        vendorProfile?: { setupCompleted: boolean } | null;
+    }>(user: T) {
+        const { passwordHash: _passwordHash, vendorProfile, ...publicUser } = user;
+        return {
+            ...publicUser,
+            vendorSetupCompleted: vendorProfile?.setupCompleted ?? false,
+        };
     }
     async getCurrentUser(userId: string) {
         const user = await this.prisma.user.findUnique({

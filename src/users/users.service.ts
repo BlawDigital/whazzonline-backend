@@ -46,6 +46,7 @@ export class UsersService {
             orderBy: {
                 createdAt: "desc",
             },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
         });
         return users.map((user) => this.toPublicUser(user));
     }
@@ -54,6 +55,7 @@ export class UsersService {
             where: {
                 id,
             },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
         });
         if (!user) {
             throw new NotFoundException("User not found.");
@@ -65,6 +67,7 @@ export class UsersService {
             where: {
                 email,
             },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
         });
         return user ? this.toPublicUser(user) : null;
     }
@@ -74,6 +77,7 @@ export class UsersService {
             where: {
                 phone,
             },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
         });
         return user ? this.toPublicUser(user) : null;
     }
@@ -86,6 +90,7 @@ export class UsersService {
                 id,
             },
             data: UpdateUserDto,
+            include: { vendorProfile: { select: { setupCompleted: true } } },
         });
         return this.toPublicUser(user);
     }
@@ -99,8 +104,14 @@ export class UsersService {
         return this.toPublicUser(user);
     }
 
-    private toPublicUser<T extends { passwordHash: unknown }>(user: T) {
-        const { passwordHash: _passwordHash, ...publicUser } = user;
-        return publicUser;
+    private toPublicUser<T extends {
+        passwordHash: unknown;
+        vendorProfile?: { setupCompleted: boolean } | null;
+    }>(user: T) {
+        const { passwordHash: _passwordHash, vendorProfile, ...publicUser } = user;
+        return {
+            ...publicUser,
+            vendorSetupCompleted: vendorProfile?.setupCompleted ?? false,
+        };
     }
 }
