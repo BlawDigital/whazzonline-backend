@@ -45,6 +45,7 @@ model User{
   city String?
   state String?
   countryCode String?
+  avatarUrl String?
 
   email String? @unique
   passwordHash String?

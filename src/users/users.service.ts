@@ -94,6 +94,15 @@ export class UsersService {
         });
         return this.toPublicUser(user);
     }
+    async saveAvatar(id: string, avatarUrl: string) {
+        const existing = await this.findUser(id);
+        const user = await this.prisma.user.update({
+            where: { id },
+            data: { avatarUrl },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
+        });
+        return { previousAvatarUrl: existing.avatarUrl, user: this.toPublicUser(user) };
+    }
     async removeUser(id: string) {
         await this.findUser(id);
         const user = await this.prisma.user.delete({
