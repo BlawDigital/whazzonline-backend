@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
 jest.mock('prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
@@ -69,10 +73,13 @@ describe('VendorsService', () => {
         city: 'Ikeja',
         description: 'Clothing and shoes',
         lga: 'Ikeja',
+        reviewStatus: 'DRAFT',
         setupCompleted: false,
         state: 'Lagos',
         storeName: 'Example Store',
         subCategory: 'Clothing',
+        submittedAt: null,
+        termsAcceptedAt: null,
       },
       where: { userId: 'vendor-id' },
     });
@@ -89,13 +96,13 @@ describe('VendorsService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('marks setup complete only when both identity images exist', async () => {
+  it('keeps setup in draft after identity uploads', async () => {
     prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
     prisma.vendorProfile.findUnique.mockResolvedValue({
       bannerUrl: '/uploads/vendors/banner.png',
       logoUrl: null,
     });
-    prisma.vendorProfile.update.mockResolvedValue({ setupCompleted: true });
+    prisma.vendorProfile.update.mockResolvedValue({ setupCompleted: false });
 
     await service.saveIdentity('vendor-id', {
       logoUrl: '/uploads/vendors/logo.png',
@@ -104,7 +111,85 @@ describe('VendorsService', () => {
     expect(prisma.vendorProfile.update).toHaveBeenCalledWith({
       data: {
         logoUrl: '/uploads/vendors/logo.png',
+        reviewStatus: 'DRAFT',
+        setupCompleted: false,
+        submittedAt: null,
+        termsAcceptedAt: null,
+      },
+      where: { userId: 'vendor-id' },
+    });
+  });
+
+  it('stores validated payout details without completing setup', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({ id: 'profile-id' });
+    prisma.vendorProfile.update.mockResolvedValue({ setupCompleted: false });
+
+    await service.saveBank('vendor-id', {
+      accountName: 'Ada Vendor',
+      accountNumber: '0123456789',
+      bankCode: '011',
+      bankName: 'First Bank of Nigeria',
+    });
+
+    expect(prisma.vendorProfile.update).toHaveBeenCalledWith({
+      data: {
+        bankAccountName: 'Ada Vendor',
+        bankAccountNumber: '0123456789',
+        bankCode: '011',
+        bankName: 'First Bank of Nigeria',
+        reviewStatus: 'DRAFT',
+        setupCompleted: false,
+        submittedAt: null,
+        termsAcceptedAt: null,
+      },
+      where: { userId: 'vendor-id' },
+    });
+  });
+
+  it('rejects submission until identity and payout details are complete', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      bannerUrl: '/uploads/vendors/banner.png',
+      logoUrl: '/uploads/vendors/logo.png',
+    });
+
+    await expect(
+      service.submitProfile('vendor-id', {
+        sellerType: 'RETAILER',
+        termsAccepted: true,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('submits a complete vendor profile for review', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      bankAccountName: 'Ada Vendor',
+      bankAccountNumber: '0123456789',
+      bankCode: '011',
+      bankName: 'First Bank of Nigeria',
+      bannerUrl: '/uploads/vendors/banner.png',
+      cacUrl: '/uploads/vendors/cac.png',
+      logoUrl: '/uploads/vendors/logo.png',
+    });
+    prisma.vendorProfile.update.mockResolvedValue({
+      reviewStatus: 'PENDING',
+      setupCompleted: true,
+    });
+
+    await service.submitProfile('vendor-id', {
+      sellerType: 'BOTH',
+      termsAccepted: true,
+    });
+
+    expect(prisma.vendorProfile.update).toHaveBeenCalledWith({
+      data: {
+        reviewStatus: 'PENDING',
+        sellerType: 'BOTH',
         setupCompleted: true,
+        submittedAt: expect.any(Date),
+        termsAcceptedAt: expect.any(Date),
       },
       where: { userId: 'vendor-id' },
     });

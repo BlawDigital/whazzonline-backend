@@ -4,8 +4,8 @@
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
   moduleFormat = "cjs"
 }
 
@@ -33,24 +33,24 @@ enum AuthProvider {
   FACEBOOK
 }
 
-model User{
-  id String @id @default(uuid())
+model User {
+  id        String   @id @default(uuid())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  firstName String?
-  lastName String?
+  firstName   String?
+  lastName    String?
   dateOfBirth String?
-  address String?
-  city String?
-  state String?
+  address     String?
+  city        String?
+  state       String?
   countryCode String?
-  avatarUrl String?
+  avatarUrl   String?
 
-  email String? @unique
+  email        String? @unique
   passwordHash String?
-  
-  phone String? @unique
+
+  phone        String?       @unique
   authProvider AuthProvider?
 
   registrationType RegistrationType?
@@ -58,7 +58,7 @@ model User{
   role UserRole @default(CUSTOMER)
 
   isVerified Boolean @default(false)
-  isActive Boolean @default(true)
+  isActive   Boolean @default(true)
 
   vendorProfile VendorProfile?
 
@@ -68,38 +68,54 @@ model User{
   @@index([role])
 }
 
-model PhoneOtp{
-  id String @id @default(cuid())
-  phone String 
-  codeHash String
+model PhoneOtp {
+  id        String   @id @default(cuid())
+  phone     String
+  codeHash  String
   expiresAt DateTime
-  attempts Int @default(0)
-  verified Boolean @default(false)
+  attempts  Int      @default(0)
+  verified  Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([phone])
 }
 
+enum VendorReviewStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model VendorProfile {
-  id String @id @default(uuid())
+  id        String   @id @default(uuid())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   userId String @unique
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  storeName String
-  category String
-  subCategory String
-  state String
-  city String
-  lga String
-  address String
-  landmark String?
-  description String
-  logoUrl String?
-  bannerUrl String?
-  setupCompleted Boolean @default(false)
+  storeName         String
+  category          String
+  subCategory       String
+  state             String
+  city              String
+  lga               String
+  address           String
+  landmark          String?
+  description       String
+  logoUrl           String?
+  bannerUrl         String?
+  cacUrl            String?
+  bankName          String?
+  bankCode          String?
+  bankAccountNumber String?
+  bankAccountName   String?
+  sellerType        String?
+  termsAcceptedAt   DateTime?
+  submittedAt       DateTime?
+  reviewStatus      VendorReviewStatus @default(DRAFT)
+  setupCompleted    Boolean            @default(false)
 
   @@index([category])
   @@index([state, city])
