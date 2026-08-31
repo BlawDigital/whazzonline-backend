@@ -117,6 +117,35 @@ model VendorProfile {
   reviewStatus      VendorReviewStatus @default(DRAFT)
   setupCompleted    Boolean            @default(false)
 
+  products Product[]
+
   @@index([category])
   @@index([state, city])
+}
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+model Product {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vendorProfileId String
+  vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+
+  category  String
+  name      String
+  unitPrice Int
+  quantity  Int
+  variants  Json          @default("[]")
+  imageUrls String[]
+  status    ProductStatus @default(ACTIVE)
+
+  @@index([vendorProfileId, status])
+  @@index([category])
+  @@index([createdAt])
 }

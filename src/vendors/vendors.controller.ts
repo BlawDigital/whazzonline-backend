@@ -9,10 +9,14 @@ import {
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FilesInterceptor,
+} from '@nestjs/platform-express';
 
-import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
+import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
+import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
 import {
   publicVendorUploadUrl,
@@ -20,6 +24,11 @@ import {
   vendorUploadOptions,
 } from './vendor-upload.config';
 import { VendorsService } from './vendors.service';
+import {
+  productUploadOptions,
+  publicProductUploadUrl,
+  removeProductUploads,
+} from './product-upload.config';
 
 type IdentityFiles = {
   banner?: Express.Multer.File[];
@@ -34,6 +43,40 @@ export class VendorsController {
   @Get(':userId/profile')
   findProfile(@Param('userId') userId: string) {
     return this.vendorsService.findProfile(userId);
+  }
+
+  @Get(':userId/storefront')
+  findStorefront(@Param('userId') userId: string) {
+    return this.vendorsService.findStorefront(userId);
+  }
+
+  @Get(':userId/products')
+  findProducts(@Param('userId') userId: string) {
+    return this.vendorsService.findProducts(userId);
+  }
+
+  @Post(':userId/products')
+  @UseInterceptors(FilesInterceptor('images', 5, productUploadOptions))
+  async createProduct(
+    @Param('userId') userId: string,
+    @Body() dto: CreateVendorProductDto,
+    @UploadedFiles() files: Express.Multer.File[],
+  ) {
+    const images = files ?? [];
+    if (images.length === 0) {
+      throw new BadRequestException('Add at least one product image.');
+    }
+
+    try {
+      return await this.vendorsService.createProduct(
+        userId,
+        dto,
+        images.map(publicProductUploadUrl),
+      );
+    } catch (error) {
+      removeProductUploads(images);
+      throw error;
+    }
   }
 
   @Put(':userId/profile')

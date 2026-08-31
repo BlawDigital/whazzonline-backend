@@ -12,6 +12,10 @@ import { VendorsService } from './vendors.service';
 
 describe('VendorsService', () => {
   const prisma = {
+    product: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+    },
     user: { findUnique: jest.fn() },
     vendorProfile: {
       findUnique: jest.fn(),
@@ -192,6 +196,82 @@ describe('VendorsService', () => {
         termsAcceptedAt: expect.any(Date),
       },
       where: { userId: 'vendor-id' },
+    });
+  });
+
+  it('returns the vendor storefront with active products', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      id: 'profile-id',
+      products: [{ id: 'product-id', status: 'ACTIVE' }],
+      storeName: 'Example Store',
+      user: { avatarUrl: '/uploads/users/avatar.png' },
+      userId: 'vendor-id',
+    });
+
+    await expect(service.findStorefront('vendor-id')).resolves.toEqual({
+      products: [{ id: 'product-id', status: 'ACTIVE' }],
+      profile: {
+        avatarUrl: '/uploads/users/avatar.png',
+        id: 'profile-id',
+        storeName: 'Example Store',
+        userId: 'vendor-id',
+      },
+    });
+  });
+
+  it('rejects product creation until vendor setup is complete', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      id: 'profile-id',
+      setupCompleted: false,
+    });
+
+    await expect(
+      service.createProduct(
+        'vendor-id',
+        {
+          category: 'Fashion & Apparel',
+          name: 'Jorani air sneakers',
+          quantity: 3,
+          unitPrice: 134000,
+          variants: [],
+        },
+        ['/uploads/products/shoe.png'],
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('creates an active product for a completed vendor', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      id: 'profile-id',
+      setupCompleted: true,
+    });
+    prisma.product.create.mockResolvedValue({ id: 'product-id' });
+
+    await service.createProduct(
+      'vendor-id',
+      {
+        category: 'Fashion & Apparel',
+        name: 'Jorani air sneakers',
+        quantity: 3,
+        unitPrice: 134000,
+        variants: [{ quantity: 2, type: 'Black / 42' }],
+      },
+      ['/uploads/products/shoe.png'],
+    );
+
+    expect(prisma.product.create).toHaveBeenCalledWith({
+      data: {
+        category: 'Fashion & Apparel',
+        imageUrls: ['/uploads/products/shoe.png'],
+        name: 'Jorani air sneakers',
+        quantity: 3,
+        unitPrice: 134000,
+        variants: [{ quantity: 2, type: 'Black / 42' }],
+        vendorProfileId: 'profile-id',
+      },
     });
   });
 });

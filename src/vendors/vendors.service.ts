@@ -6,8 +6,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 
-import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
+import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
+import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
 import { removeVendorUploadUrl } from './vendor-upload.config';
 
@@ -33,6 +34,71 @@ export class VendorsService {
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
     return profile;
+  }
+
+  async findStorefront(userId: string) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      include: {
+        products: {
+          where: { status: 'ACTIVE' },
+          orderBy: { createdAt: 'desc' },
+        },
+        user: { select: { avatarUrl: true } },
+      },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    const { products, user, ...store } = profile;
+    return { products, profile: { ...store, avatarUrl: user.avatarUrl } };
+  }
+
+  async findProducts(userId: string) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    return this.prisma.product.findMany({
+      where: { vendorProfileId: profile.id, status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async createProduct(
+    userId: string,
+    dto: CreateVendorProductDto,
+    imageUrls: string[],
+  ) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: { id: true, setupCompleted: true },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+    if (!profile.setupCompleted) {
+      throw new BadRequestException(
+        'Complete your vendor setup before adding products.',
+      );
+    }
+
+    return this.prisma.product.create({
+      data: {
+        category: dto.category,
+        imageUrls,
+        name: dto.name,
+        quantity: dto.quantity,
+        unitPrice: dto.unitPrice,
+        variants: dto.variants.map((variant) => ({
+          quantity: variant.quantity,
+          type: variant.type,
+        })),
+        vendorProfileId: profile.id,
+      },
+    });
   }
 
   async saveProfile(userId: string, dto: SaveVendorProfileDto) {
