@@ -124,6 +124,25 @@ model WalletTransaction {
   @@index([status])
 }
 
+enum ReferralStatus {
+  COMPLETED
+  PENDING
+}
+
+model Referral {
+  id             String         @id @default(uuid())
+  createdAt      DateTime       @default(now())
+  referrerUserId String
+  referrer       User           @relation("Referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  refereeName    String
+  rewardAmount   Int            @default(500)
+  status         ReferralStatus @default(PENDING)
+  completedAt    DateTime?
+
+  @@index([referrerUserId, createdAt])
+  @@index([status])
+}
+
 model PhoneOtp {
   id         String          @id @default(cuid())
   phone      String

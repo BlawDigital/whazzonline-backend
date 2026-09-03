@@ -106,6 +106,42 @@ async function seedWallet(
   });
 }
 
+async function seedReferrals(userId: string) {
+  if (await prisma.referral.count({ where: { referrerUserId: userId } })) return;
+  const at = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000);
+  const completed = (refereeName: string, daysAgo: number) => ({
+    referrerUserId: userId,
+    refereeName,
+    rewardAmount: 3125,
+    status: 'COMPLETED' as const,
+    createdAt: at(daysAgo),
+    completedAt: at(daysAgo),
+  });
+  const pending = (refereeName: string, daysAgo: number) => ({
+    referrerUserId: userId,
+    refereeName,
+    rewardAmount: 3125,
+    status: 'PENDING' as const,
+    createdAt: at(daysAgo),
+  });
+  await prisma.referral.createMany({
+    data: [
+      completed('Rita Mma', 0),
+      completed('Faith Vinc', 0),
+      pending('Jessica Chris', 24),
+      completed('Alhaji Musa', 1),
+      completed('Alhaji Musa', 2),
+      completed('Alhaji Musa', 3),
+      completed('Alhaji Musa', 4),
+      pending('Jessica Chris', 24),
+      completed('Mariam Bello', 5),
+      pending('John Adewale', 31),
+      completed('Kemi Adeyemi', 32),
+      pending('Chika Okafor', 34),
+    ],
+  });
+}
+
 async function main() {
   for (const [index, storeName] of [
     'Oden Store',
@@ -126,7 +162,10 @@ async function main() {
     });
   }
   const users = await prisma.user.findMany({ orderBy: { createdAt: 'asc' } });
-  for (const [index, user] of users.entries()) await seedWallet(user, index);
+  for (const [index, user] of users.entries()) {
+    await seedWallet(user, index);
+    await seedReferrals(user.id);
+  }
   const vendors = users.filter(
     (user) => user.role === 'VENDOR' || user.role === 'BUSINESS',
   );
@@ -168,7 +207,7 @@ async function main() {
     });
   }
   console.log(
-    `Seeded wallets for ${users.length} users and marketplace products for ${vendors.length} vendors.`,
+    `Seeded wallets and referrals for ${users.length} users and marketplace products for ${vendors.length} vendors.`,
   );
 }
 
