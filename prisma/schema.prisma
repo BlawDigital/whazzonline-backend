@@ -73,11 +73,55 @@ model User {
   isActive   Boolean @default(true)
 
   vendorProfile VendorProfile?
+  wallet        Wallet?
+  referrals     Referral[] @relation("Referrer")
 
   @@index([email])
   @@index([phone])
   @@index([registrationType])
   @@index([role])
+}
+
+enum WalletTransactionType {
+  FUNDING
+  PURCHASE
+  REFERRAL_BONUS
+  WITHDRAWAL
+}
+
+enum WalletTransactionStatus {
+  COMPLETED
+  FAILED
+  PENDING
+}
+
+model Wallet {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availableBalance Int    @default(0)
+  mainBalance      Int    @default(0)
+  referralBonus    Int    @default(0)
+  accountName      String?
+  accountNumber    String? @unique
+  bankName         String?
+  transactions     WalletTransaction[]
+}
+
+model WalletTransaction {
+  id          String                  @id @default(uuid())
+  createdAt   DateTime                @default(now())
+  walletId    String
+  wallet      Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount      Int
+  description String
+  type        WalletTransactionType
+  status      WalletTransactionStatus @default(COMPLETED)
+
+  @@index([walletId, createdAt])
+  @@index([status])
 }
 
 model PhoneOtp {
