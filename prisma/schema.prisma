@@ -33,6 +33,16 @@ enum AuthProvider {
   FACEBOOK
 }
 
+enum EmailOtpPurpose {
+  EMAIL_CHANGE
+  PASSWORD_RESET
+}
+
+enum PhoneOtpPurpose {
+  PHONE_CHANGE
+  REGISTRATION
+}
+
 model User {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now())
@@ -69,15 +79,33 @@ model User {
 }
 
 model PhoneOtp {
-  id        String   @id @default(cuid())
-  phone     String
-  codeHash  String
-  expiresAt DateTime
-  attempts  Int      @default(0)
-  verified  Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id         String          @id @default(cuid())
+  phone      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int             @default(0)
+  verified   Boolean         @default(false)
+  purpose    PhoneOtpPurpose @default(REGISTRATION)
+  consumedAt DateTime?
+  createdAt  DateTime        @default(now())
 
-  @@index([phone])
+  @@index([phone, purpose])
+}
+
+model EmailOtp {
+  id         String          @id @default(cuid())
+  email      String
+  userId     String?
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int             @default(0)
+  verified   Boolean         @default(false)
+  consumedAt DateTime?
+  purpose    EmailOtpPurpose
+  createdAt  DateTime        @default(now())
+
+  @@index([email, purpose])
+  @@index([userId, purpose])
 }
 
 enum VendorReviewStatus {

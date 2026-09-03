@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { AuthService } from "./auth.service";
 import { SendPhoneOtpDto } from "./dto/send-otp.dto";
 import { VerifyPhoneOtpDto } from "./dto/verify-otp";
@@ -6,6 +6,12 @@ import { LoginDto } from "./dto/login.dto";
 import { RegisterDto } from "./dto/register.dto";
 import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import type { AuthenticatedRequest } from "./guards/authenticated-request";
+import { EmailOtpRequestDto, EmailOtpVerifyDto } from './dto/email-otp.dto';
+import {
+    PasswordResetRequestDto,
+    PasswordResetUpdateDto,
+    PasswordResetVerifyDto,
+} from './dto/password-reset.dto';
 
 @Controller("auth")
 export class AuthController {
@@ -46,5 +52,52 @@ export class AuthController {
     @Post("login")
     async login(@Body() dto: LoginDto,) {
         return this.authService.login(dto);
+    }
+
+    @Post('users/:userId/email/request-change')
+    requestEmailChange(
+        @Param('userId') userId: string,
+        @Body() dto: EmailOtpRequestDto,
+    ) {
+        return this.authService.requestEmailChange(userId, dto.email);
+    }
+
+    @Post('users/:userId/email/confirm-change')
+    confirmEmailChange(
+        @Param('userId') userId: string,
+        @Body() dto: EmailOtpVerifyDto,
+    ) {
+        return this.authService.confirmEmailChange(userId, dto.email, dto.code);
+    }
+
+    @Post('users/:userId/phone/request-change')
+    requestPhoneChange(
+        @Param('userId') userId: string,
+        @Body() dto: SendPhoneOtpDto,
+    ) {
+        return this.authService.requestPhoneChange(userId, dto.phone);
+    }
+
+    @Post('users/:userId/phone/confirm-change')
+    confirmPhoneChange(
+        @Param('userId') userId: string,
+        @Body() dto: VerifyPhoneOtpDto,
+    ) {
+        return this.authService.confirmPhoneChange(userId, dto.phone, dto.code);
+    }
+
+    @Post('password-reset/request')
+    requestPasswordReset(@Body() dto: PasswordResetRequestDto) {
+        return this.authService.requestPasswordReset(dto.email);
+    }
+
+    @Post('password-reset/verify')
+    verifyPasswordReset(@Body() dto: PasswordResetVerifyDto) {
+        return this.authService.verifyPasswordReset(dto.email, dto.code);
+    }
+
+    @Post('password-reset/update')
+    resetPassword(@Body() dto: PasswordResetUpdateDto) {
+        return this.authService.resetPassword(dto.email, dto.code, dto.password);
     }
 }

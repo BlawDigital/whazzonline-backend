@@ -1,4 +1,5 @@
-import { ConflictException, Injectable, NotFoundException, } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { EmailOtpPurpose } from 'generated/prisma/enums';
 
 import { OtpService } from "./otp/otp.service";
 import { PrismaService } from "prisma/prisma.service";
@@ -42,6 +43,139 @@ export class AuthService {
             ...verification,
             user: user ? this.toPublicUser(user) : null,
         };
+    }
+
+    async requestEmailChange(userId: string, email: string) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found.');
+        if (user.email?.toLowerCase() === normalizedEmail) {
+            throw new ConflictException('This is already the email on your account.');
+        }
+        const existing = await this.prisma.user.findUnique({
+            where: { email: normalizedEmail },
+        });
+        if (existing) throw new ConflictException('An account with this email already exists.');
+        return this.otpService.sendEmailOtp(
+            normalizedEmail,
+            'EMAIL_CHANGE',
+            userId,
+        );
+    }
+
+    async confirmEmailChange(userId: string, email: string, code: string) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const existing = await this.prisma.user.findUnique({
+            where: { email: normalizedEmail },
+        });
+        if (existing && existing.id !== userId) {
+            throw new ConflictException('An account with this email already exists.');
+        }
+        const otpId = await this.otpService.verifyEmailOtp(
+            normalizedEmail,
+            code,
+            'EMAIL_CHANGE',
+            userId,
+        );
+        const user = await this.prisma.user.update({
+            where: { id: userId },
+            data: { email: normalizedEmail },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
+        });
+        await this.prisma.emailOtp.update({
+            where: { id: otpId },
+            data: { consumedAt: new Date() },
+        });
+        return this.toPublicUser(user);
+    }
+
+    async requestPhoneChange(userId: string, phone: string) {
+        const normalizedPhone = phone.trim();
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user) throw new NotFoundException('User not found.');
+        if (user.phone === normalizedPhone) {
+            throw new ConflictException('This is already the phone number on your account.');
+        }
+        const existing = await this.prisma.user.findUnique({
+            where: { phone: normalizedPhone },
+        });
+        if (existing) throw new ConflictException('An account with this phone number already exists.');
+        return this.otpService.sendPhoneOtp(normalizedPhone, 'PHONE_CHANGE');
+    }
+
+    async confirmPhoneChange(userId: string, phone: string, code: string) {
+        const normalizedPhone = phone.trim();
+        const existing = await this.prisma.user.findUnique({
+            where: { phone: normalizedPhone },
+        });
+        if (existing && existing.id !== userId) {
+            throw new ConflictException('An account with this phone number already exists.');
+        }
+        await this.otpService.verifyPhoneOtp(
+            normalizedPhone,
+            code,
+            'PHONE_CHANGE',
+        );
+        const user = await this.prisma.user.update({
+            where: { id: userId },
+            data: { phone: normalizedPhone },
+            include: { vendorProfile: { select: { setupCompleted: true } } },
+        });
+        await this.prisma.phoneOtp.updateMany({
+            where: {
+                phone: normalizedPhone,
+                purpose: 'PHONE_CHANGE',
+                verified: true,
+                consumedAt: null,
+            },
+            data: { consumedAt: new Date() },
+        });
+        return this.toPublicUser(user);
+    }
+
+    async requestPasswordReset(email: string) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const user = await this.prisma.user.findUnique({
+            where: { email: normalizedEmail },
+        });
+        // The public response does not reveal whether the address has an account.
+        if (user) {
+            await this.otpService.sendEmailOtp(
+                normalizedEmail,
+                'PASSWORD_RESET',
+                user.id,
+            );
+        }
+        return { message: 'If this email is linked to an account, a reset code has been sent.' };
+    }
+
+    async verifyPasswordReset(email: string, code: string) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
+        if (!user) throw new NotFoundException('No account was found for this email.');
+        await this.otpService.verifyEmailOtp(
+            normalizedEmail,
+            code,
+            'PASSWORD_RESET',
+            user.id,
+        );
+        return { verified: true };
+    }
+
+    async resetPassword(email: string, code: string, password: string) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
+        if (!user) throw new NotFoundException('No account was found for this email.');
+        await this.otpService.consumeVerifiedEmailOtp(
+            normalizedEmail,
+            code,
+            'PASSWORD_RESET',
+        );
+        await this.prisma.user.update({
+            where: { id: user.id },
+            data: { passwordHash: await bcrypt.hash(password, 12) },
+        });
+        return { message: 'Password updated successfully.' };
     }
 
     // ============================================================
