@@ -1,11 +1,4 @@
-import {
-  IsEnum,
-  IsOptional,
-  IsString,
-  MinLength,
-} from "class-validator";
-import { RegistrationType, UserRole } from "generated/prisma/enums";
-
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class UpdateUserDto {
   @IsOptional()
@@ -37,15 +30,4 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   countryCode?: string;
-
-  @IsOptional()
-  @IsEnum(RegistrationType)
-  registrationType?: RegistrationType;
-
-  @IsOptional()
-  @IsEnum(UserRole)
-  role?: UserRole;
-
-  @IsOptional()
-  isActive?: boolean;
 }
