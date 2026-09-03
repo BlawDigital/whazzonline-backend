@@ -158,7 +158,11 @@ export class OtpService {
     await this.emailOtpProvider.sendOtp(
       normalizedEmail,
       otp,
-      purpose === 'EMAIL_CHANGE' ? 'email change' : 'password reset',
+      purpose === 'REGISTRATION'
+        ? 'registration'
+        : purpose === 'EMAIL_CHANGE'
+          ? 'email change'
+          : 'password reset',
     );
     return {
       message: 'Verification code sent.',

@@ -45,6 +45,16 @@ export class AuthController {
     return this.authService.verifyPhoneOtp(dto.phone, dto.code);
   }
 
+  @Post('email/send-otp')
+  sendEmailRegistrationOtp(@Body() dto: EmailOtpRequestDto) {
+    return this.authService.sendEmailRegistrationOtp(dto.email);
+  }
+
+  @Post('email/verify-otp')
+  verifyEmailRegistrationOtp(@Body() dto: EmailOtpVerifyDto) {
+    return this.authService.verifyEmailRegistrationOtp(dto.email, dto.code);
+  }
+
   // ============================================================
   // REGISTRATION
   // ============================================================

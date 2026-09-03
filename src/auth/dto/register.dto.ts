@@ -1,7 +1,6 @@
 import {
   IsEmail,
   IsEnum,
-  IsNotEmpty,
   IsOptional,
   IsString,
   MinLength,
@@ -9,9 +8,9 @@ import {
 import { RegistrationType } from 'generated/prisma/enums';
 
 export class RegisterDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  phone!: string;
+  phone?: string;
 
   @IsOptional()
   @IsString()

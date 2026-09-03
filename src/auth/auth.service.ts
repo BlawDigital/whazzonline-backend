@@ -52,6 +52,29 @@ export class AuthService {
     };
   }
 
+  async sendEmailRegistrationOtp(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+    if (existing) {
+      throw new ConflictException('An account with this email already exists.');
+    }
+    return this.otpService.sendEmailOtp(normalizedEmail, 'REGISTRATION');
+  }
+
+  async verifyEmailRegistrationOtp(email: string, code: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
+    if (existing) {
+      throw new ConflictException('An account with this email already exists.');
+    }
+    await this.otpService.verifyEmailOtp(normalizedEmail, code, 'REGISTRATION');
+    return { message: 'Email verified successfully.', verified: true };
+  }
+
   async requestEmailChange(userId: string, email: string) {
     const normalizedEmail = email.trim().toLowerCase();
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -205,13 +228,20 @@ export class AuthService {
   async register(registerDto: RegisterDto) {
     const { phone, firstName, lastName, email, registrationType, password } =
       registerDto;
+    const normalizedPhone = phone?.trim();
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    if (!normalizedPhone && !normalizedEmail) {
+      throw new ConflictException('Email or phone number is required.');
+    }
+    if (normalizedEmail && !password) {
+      throw new ConflictException('A password is required for email sign-up.');
+    }
 
     // Check phone
-    const existingPhone = await this.prisma.user.findUnique({
-      where: {
-        phone,
-      },
-    });
+    const existingPhone = normalizedPhone
+      ? await this.prisma.user.findUnique({ where: { phone: normalizedPhone } })
+      : null;
 
     if (existingPhone) {
       throw new ConflictException(
@@ -220,10 +250,10 @@ export class AuthService {
     }
 
     // Check email
-    if (email) {
+    if (normalizedEmail) {
       const existingEmail = await this.prisma.user.findUnique({
         where: {
-          email,
+          email: normalizedEmail,
         },
       });
 
@@ -235,18 +265,32 @@ export class AuthService {
     }
 
     // Check phone verification
-    const verifiedOtp = await this.prisma.phoneOtp.findFirst({
-      where: {
-        phone,
-        verified: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const verifiedOtp = normalizedPhone
+      ? await this.prisma.phoneOtp.findFirst({
+          where: {
+            phone: normalizedPhone,
+            purpose: 'REGISTRATION',
+            verified: true,
+            consumedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : await this.prisma.emailOtp.findFirst({
+          where: {
+            email: normalizedEmail!,
+            purpose: 'REGISTRATION',
+            verified: true,
+            consumedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+        });
 
     if (!verifiedOtp) {
-      throw new ConflictException('Phone number has not been verified.');
+      throw new ConflictException(
+        normalizedPhone
+          ? 'Phone number has not been verified.'
+          : 'Email address has not been verified.',
+      );
     }
 
     // Hash password
@@ -263,17 +307,29 @@ export class AuthService {
     // Create account
     const user = await this.prisma.user.create({
       data: {
-        phone,
+        phone: normalizedPhone,
         firstName,
         lastName,
-        email,
+        email: normalizedEmail,
         passwordHash,
         registrationType,
         role,
-        authProvider: 'PHONE',
+        authProvider: normalizedPhone ? 'PHONE' : 'EMAIL',
         isVerified: true,
       },
     });
+
+    if (normalizedPhone) {
+      await this.prisma.phoneOtp.update({
+        where: { id: verifiedOtp.id },
+        data: { consumedAt: new Date() },
+      });
+    } else {
+      await this.prisma.emailOtp.update({
+        where: { id: verifiedOtp.id },
+        data: { consumedAt: new Date() },
+      });
+    }
 
     const accessToken = await this.generateToken(user);
 

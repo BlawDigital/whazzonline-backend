@@ -12,12 +12,14 @@ export class ResendEmailOtpProvider implements EmailOtpProvider {
   async sendOtp(
     email: string,
     otp: string,
-    purpose: 'email change' | 'password reset',
+    purpose: 'registration' | 'email change' | 'password reset',
   ): Promise<void> {
     const subject =
-      purpose === 'email change'
-        ? 'Confirm your new Whazzonline email'
-        : 'Reset your Whazzonline password';
+      purpose === 'registration'
+        ? 'Confirm your Whazzonline email'
+        : purpose === 'email change'
+          ? 'Confirm your new Whazzonline email'
+          : 'Reset your Whazzonline password';
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {

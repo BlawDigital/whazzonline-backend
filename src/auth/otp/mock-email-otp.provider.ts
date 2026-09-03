@@ -9,7 +9,7 @@ export class MockEmailOtpProvider implements EmailOtpProvider {
   async sendOtp(
     email: string,
     otp: string,
-    purpose: 'email change' | 'password reset',
+    purpose: 'registration' | 'email change' | 'password reset',
   ): Promise<void> {
     this.logger.log(`[DEV EMAIL OTP] ${purpose} ${email} -> ${otp}`);
   }

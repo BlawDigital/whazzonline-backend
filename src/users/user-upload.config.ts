@@ -1,17 +1,17 @@
-import { BadRequestException } from "@nestjs/common";
-import { diskStorage } from "multer";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, unlinkSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { BadRequestException } from '@nestjs/common';
+import { diskStorage } from 'multer';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, unlinkSync } from 'node:fs';
+import { extname, join, resolve } from 'node:path';
 
 const MIME_EXTENSIONS: Record<string, string> = {
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-  "image/webp": ".webp",
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/webp': '.webp',
 };
 
-const uploadRoot = resolve(process.env.UPLOAD_DIR ?? "uploads");
-const uploadDirectory = join(uploadRoot, "users");
+const uploadRoot = resolve(process.env.UPLOAD_DIR ?? 'uploads');
+const uploadDirectory = join(uploadRoot, 'users');
 
 export const userUploadOptions = {
   storage: diskStorage({
@@ -20,13 +20,21 @@ export const userUploadOptions = {
       callback(null, uploadDirectory);
     },
     filename: (_request, file, callback) => {
-      const extension = MIME_EXTENSIONS[file.mimetype] ?? extname(file.originalname);
+      const extension =
+        MIME_EXTENSIONS[file.mimetype] ?? extname(file.originalname);
       callback(null, `${randomUUID()}${extension.toLowerCase()}`);
     },
   }),
-  fileFilter: (_request: unknown, file: Express.Multer.File, callback: (error: Error | null, acceptFile: boolean) => void) => {
+  fileFilter: (
+    _request: unknown,
+    file: Express.Multer.File,
+    callback: (error: Error | null, acceptFile: boolean) => void,
+  ) => {
     if (!MIME_EXTENSIONS[file.mimetype]) {
-      callback(new BadRequestException("Only PNG, JPEG, and WebP images are allowed."), false);
+      callback(
+        new BadRequestException('Only PNG, JPEG, and WebP images are allowed.'),
+        false,
+      );
       return;
     }
     callback(null, true);
@@ -39,10 +47,18 @@ export function publicUserUploadUrl(file: Express.Multer.File) {
 }
 
 export function removeUploadedFile(file: Express.Multer.File) {
-  try { unlinkSync(file.path); } catch { /* Best-effort cleanup after a failed save. */ }
+  try {
+    unlinkSync(file.path);
+  } catch {
+    /* Best-effort cleanup after a failed save. */
+  }
 }
 
 export function removeUserUploadUrl(url?: string | null) {
-  if (!url?.startsWith("/uploads/users/")) return;
-  try { unlinkSync(join(uploadDirectory, url.split("/").pop()!)); } catch { /* Old file may already be absent. */ }
+  if (!url?.startsWith('/uploads/users/')) return;
+  try {
+    unlinkSync(join(uploadDirectory, url.split('/').pop()!));
+  } catch {
+    /* Old file may already be absent. */
+  }
 }

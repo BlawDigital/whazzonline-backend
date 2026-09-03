@@ -1,14 +1,14 @@
-import { ValidationPipe } from "@nestjs/common";
-import { NestFactory } from "@nestjs/core";
-import { AppModule } from "./app.module";
-import { NestExpressApplication } from "@nestjs/platform-express";
-import { resolve } from "node:path";
+import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { resolve } from 'node:path';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  app.useStaticAssets(resolve(process.env.UPLOAD_DIR ?? "uploads"), {
-    prefix: "/uploads/",
+  app.useStaticAssets(resolve(process.env.UPLOAD_DIR ?? 'uploads'), {
+    prefix: '/uploads/',
   });
 
   app.enableCors({

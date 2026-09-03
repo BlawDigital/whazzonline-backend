@@ -1,4 +1,12 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsPhoneNumber,
+  IsString,
+  MinLength,
+} from 'class-validator';
+import { RegistrationType, UserRole } from 'generated/prisma/enums';
 
 export class UpdateUserDto {
   @IsOptional()
@@ -30,4 +38,25 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   countryCode?: string;
+
+  // Keep these shared fields for the web client contract. Mobile uses the
+  // dedicated verified-contact endpoints when changing either identifier.
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsPhoneNumber()
+  phone?: string;
+
+  @IsOptional()
+  @IsEnum(RegistrationType)
+  registrationType?: RegistrationType;
+
+  @IsOptional()
+  @IsEnum(UserRole)
+  role?: UserRole;
+
+  @IsOptional()
+  isActive?: boolean;
 }

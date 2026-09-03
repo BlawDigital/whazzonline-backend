@@ -4,6 +4,6 @@ export interface EmailOtpProvider {
   sendOtp(
     email: string,
     otp: string,
-    purpose: 'email change' | 'password reset',
+    purpose: 'registration' | 'email change' | 'password reset',
   ): Promise<void>;
 }
