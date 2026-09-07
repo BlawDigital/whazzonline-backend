@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { EmailOtpPurpose } from 'generated/prisma/enums';
 import { JwtService } from '@nestjs/jwt';
@@ -11,6 +12,7 @@ import { PrismaService } from 'prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
+import { normalizePhone, phoneLookupCandidates } from './phone/normalize-phone';
 @Injectable()
 export class AuthService {
   constructor(
@@ -40,9 +42,13 @@ export class AuthService {
   }
 
   async verifyPhoneOtp(phone: string, code: string) {
-    const verification = await this.otpService.verifyPhoneOtp(phone, code);
-    const user = await this.prisma.user.findUnique({
-      where: { phone: phone.trim() },
+    const normalizedPhone = normalizePhone(phone);
+    const verification = await this.otpService.verifyPhoneOtp(
+      normalizedPhone,
+      code,
+    );
+    const user = await this.prisma.user.findFirst({
+      where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
       include: { vendorProfile: { select: { setupCompleted: true } } },
     });
 
@@ -121,7 +127,7 @@ export class AuthService {
   }
 
   async requestPhoneChange(userId: string, phone: string) {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = normalizePhone(phone);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found.');
     if (user.phone === normalizedPhone) {
@@ -129,8 +135,8 @@ export class AuthService {
         'This is already the phone number on your account.',
       );
     }
-    const existing = await this.prisma.user.findUnique({
-      where: { phone: normalizedPhone },
+    const existing = await this.prisma.user.findFirst({
+      where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
     });
     if (existing)
       throw new ConflictException(
@@ -140,9 +146,9 @@ export class AuthService {
   }
 
   async confirmPhoneChange(userId: string, phone: string, code: string) {
-    const normalizedPhone = phone.trim();
-    const existing = await this.prisma.user.findUnique({
-      where: { phone: normalizedPhone },
+    const normalizedPhone = normalizePhone(phone);
+    const existing = await this.prisma.user.findFirst({
+      where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
     });
     if (existing && existing.id !== userId) {
       throw new ConflictException(
@@ -228,7 +234,7 @@ export class AuthService {
   async register(registerDto: RegisterDto) {
     const { phone, firstName, lastName, email, registrationType, password } =
       registerDto;
-    const normalizedPhone = phone?.trim();
+    const normalizedPhone = phone ? normalizePhone(phone) : undefined;
     const normalizedEmail = email?.trim().toLowerCase();
 
     if (!normalizedPhone && !normalizedEmail) {
@@ -240,7 +246,9 @@ export class AuthService {
 
     // Check phone
     const existingPhone = normalizedPhone
-      ? await this.prisma.user.findUnique({ where: { phone: normalizedPhone } })
+      ? await this.prisma.user.findFirst({
+          where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
+        })
       : null;
 
     if (existingPhone) {
@@ -345,37 +353,39 @@ export class AuthService {
   // ============================================================
   async login(loginDto: LoginDto) {
     const { email, phone, password } = loginDto;
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedPhone = phone ? normalizePhone(phone) : undefined;
 
     if (!email && !phone) {
       throw new ConflictException('Email or phone number is required.');
     }
 
-    const user = email
+    const user = normalizedEmail
       ? await this.prisma.user.findUnique({
           where: {
-            email,
+            email: normalizedEmail,
           },
           include: { vendorProfile: { select: { setupCompleted: true } } },
         })
-      : await this.prisma.user.findUnique({
+      : await this.prisma.user.findFirst({
           where: {
-            phone,
+            phone: { in: phoneLookupCandidates(normalizedPhone!) },
           },
           include: { vendorProfile: { select: { setupCompleted: true } } },
         });
 
     if (!user) {
-      throw new NotFoundException('No account was found.');
+      throw new UnauthorizedException('Invalid email/phone or password.');
     }
 
     if (!user.passwordHash) {
-      throw new ConflictException('This account does not use password login.');
+      throw new UnauthorizedException('Invalid email/phone or password.');
     }
 
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
 
     if (!passwordMatches) {
-      throw new ConflictException('Invalid email/phone or password.');
+      throw new UnauthorizedException('Invalid email/phone or password.');
     }
 
     const accessToken = await this.generateToken(user);

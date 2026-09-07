@@ -74,7 +74,7 @@ model User {
 
   vendorProfile VendorProfile?
   wallet        Wallet?
-  referrals     Referral[] @relation("Referrer")
+  referrals     Referral[]     @relation("Referrer")
 
   @@index([email])
   @@index([phone])
@@ -96,16 +96,16 @@ enum WalletTransactionStatus {
 }
 
 model Wallet {
-  id             String   @id @default(uuid())
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  userId         String   @unique
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  availableBalance Int    @default(0)
-  mainBalance      Int    @default(0)
-  referralBonus    Int    @default(0)
+  id               String              @id @default(uuid())
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  userId           String              @unique
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availableBalance Int                 @default(0)
+  mainBalance      Int                 @default(0)
+  referralBonus    Int                 @default(0)
   accountName      String?
-  accountNumber    String? @unique
+  accountNumber    String?             @unique
   bankName         String?
   transactions     WalletTransaction[]
 }
@@ -230,13 +230,17 @@ model Product {
   vendorProfileId String
   vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
 
-  category  String
-  name      String
-  unitPrice Int
-  quantity  Int
-  variants  Json          @default("[]")
-  imageUrls String[]
-  status    ProductStatus @default(ACTIVE)
+  category       String
+  mainCategory   String?
+  subCategories  String[]      @default([])
+  name           String
+  description    String?
+  specifications Json          @default("{}")
+  unitPrice      Int
+  quantity       Int
+  variants       Json          @default("[]")
+  imageUrls      String[]
+  status         ProductStatus @default(ACTIVE)
 
   @@index([vendorProfileId, status])
   @@index([category])

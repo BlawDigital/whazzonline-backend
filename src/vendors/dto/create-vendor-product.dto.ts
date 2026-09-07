@@ -3,6 +3,7 @@ import {
   IsArray,
   IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -28,10 +29,46 @@ export class CreateVendorProductDto {
   @MaxLength(120)
   category!: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  mainCategory?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string' || value.trim() === '') return [];
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  })
+  @IsArray()
+  @IsString({ each: true })
+  subCategories: string[] = [];
+
   @IsString()
   @IsNotEmpty()
   @MaxLength(160)
   name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(3000)
+  description?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string' || value.trim() === '') return {};
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  })
+  @IsObject()
+  specifications: Record<string, string> = {};
 
   @Type(() => Number)
   @IsInt()

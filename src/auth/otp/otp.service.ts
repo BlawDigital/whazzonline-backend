@@ -7,6 +7,7 @@ import {
   EMAIL_OTP_PROVIDER,
   type EmailOtpProvider,
 } from './email-otp.provider';
+import { normalizePhone } from '../phone/normalize-phone';
 
 @Injectable()
 export class OtpService {
@@ -21,7 +22,7 @@ export class OtpService {
   ) {}
 
   async sendPhoneOtp(phone: string, purpose: PhoneOtpPurpose = 'REGISTRATION') {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = normalizePhone(phone);
     const existingOtp = await this.prisma.phoneOtp.findFirst({
       where: {
         phone: normalizedPhone,
@@ -74,7 +75,7 @@ export class OtpService {
     code: string,
     purpose: PhoneOtpPurpose = 'REGISTRATION',
   ) {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = normalizePhone(phone);
 
     const otpRecord = await this.prisma.phoneOtp.findFirst({
       where: {

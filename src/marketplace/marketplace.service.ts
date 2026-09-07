@@ -48,11 +48,15 @@ export class MarketplaceService {
         dateListed: dateListed(product.createdAt),
         id: product.id,
         imageUri: product.imageUrls[0] ?? '',
+        imageUrls: product.imageUrls,
         location: `${product.vendorProfile.city}, ${product.vendorProfile.state}`,
         name: product.name,
         price: `₦${product.unitPrice.toLocaleString()}`,
         seller: product.vendorProfile.storeName,
         sku: product.id,
+        description: product.description,
+        specifications: product.specifications,
+        variants: product.variants,
       })),
     };
   }

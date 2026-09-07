@@ -6,6 +6,10 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  normalizePhone,
+  phoneLookupCandidates,
+} from '../auth/phone/normalize-phone';
 
 @Injectable()
 export class UsersService {
@@ -13,11 +17,13 @@ export class UsersService {
 
   async createUser(createUserDto: CreateUserDto) {
     const { email, phone } = createUserDto;
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedPhone = phone ? normalizePhone(phone) : undefined;
 
-    if (email) {
+    if (normalizedEmail) {
       const existingEmail = await this.prisma.user.findUnique({
         where: {
-          email,
+          email: normalizedEmail,
         },
       });
       if (existingEmail) {
@@ -26,20 +32,24 @@ export class UsersService {
         );
       }
     }
-    if (phone) {
-      const existingPhone = await this.prisma.user.findUnique({
+    if (normalizedPhone) {
+      const existingPhone = await this.prisma.user.findFirst({
         where: {
-          phone,
+          phone: { in: phoneLookupCandidates(normalizedPhone) },
         },
       });
       if (existingPhone) {
         throw new ConflictException(
-          'An account with this phone number a;ready exists.',
+          'An account with this phone number already exists.',
         );
       }
     }
     const user = await this.prisma.user.create({
-      data: createUserDto,
+      data: {
+        ...createUserDto,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+      },
     });
     return this.toPublicUser(user);
   }
@@ -68,7 +78,7 @@ export class UsersService {
   async findByEmail(email: string) {
     const user = await this.prisma.user.findUnique({
       where: {
-        email,
+        email: email.trim().toLowerCase(),
       },
       include: { vendorProfile: { select: { setupCompleted: true } } },
     });
@@ -76,23 +86,29 @@ export class UsersService {
   }
 
   async findByPhone(phone: string) {
-    const user = await this.prisma.user.findUnique({
+    const user = await this.prisma.user.findFirst({
       where: {
-        phone,
+        phone: { in: phoneLookupCandidates(phone) },
       },
       include: { vendorProfile: { select: { setupCompleted: true } } },
     });
     return user ? this.toPublicUser(user) : null;
   }
 
-  async updateUser(id: string, UpdateUserDto: UpdateUserDto) {
+  async updateUser(id: string, updateUserDto: UpdateUserDto) {
     await this.findUser(id);
 
     const user = await this.prisma.user.update({
       where: {
         id,
       },
-      data: UpdateUserDto,
+      data: {
+        ...updateUserDto,
+        email: updateUserDto.email?.trim().toLowerCase(),
+        phone: updateUserDto.phone
+          ? normalizePhone(updateUserDto.phone)
+          : undefined,
+      },
       include: { vendorProfile: { select: { setupCompleted: true } } },
     });
     return this.toPublicUser(user);

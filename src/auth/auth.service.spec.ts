@@ -1,4 +1,4 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, UnauthorizedException } from '@nestjs/common';
 
 jest.mock('prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
@@ -10,7 +10,7 @@ describe('AuthService contact credentials', () => {
   const prisma = {
     emailOtp: { update: jest.fn() },
     phoneOtp: { updateMany: jest.fn() },
-    user: { findUnique: jest.fn(), update: jest.fn() },
+    user: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   };
   const otpService = {
     consumeVerifiedEmailOtp: jest.fn(),
@@ -84,6 +84,23 @@ describe('AuthService contact credentials', () => {
       expect.objectContaining({
         where: { id: 'user-1' },
       }),
+    );
+  });
+
+  it('rejects an incorrect email password and never returns a session', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      email: 'member@example.com',
+      id: 'user-1',
+      passwordHash:
+        '$2b$12$rGa.SrWmAXUGaoTzD86fUO2lnx9XzUcw.7efzHWttLL8vVYZ7.BgS',
+      vendorProfile: null,
+    });
+
+    await expect(
+      service.login({ email: 'MEMBER@example.com', password: 'Wrong#123' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { email: 'member@example.com' } }),
     );
   });
 });

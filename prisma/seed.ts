@@ -39,7 +39,15 @@ async function seedWallet(
       referralBonus: 2000,
       availableBalance: mainBalance + 2000,
     },
-    update: {},
+    update: {
+      accountName:
+        [user.firstName, user.lastName].filter(Boolean).join(' ') ||
+        'Whazzonline User',
+      bankName: 'Paystack - Titan',
+      mainBalance,
+      referralBonus: 2000,
+      availableBalance: mainBalance + 2000,
+    },
   });
   if (await prisma.walletTransaction.count({ where: { walletId: wallet.id } }))
     return;
@@ -107,7 +115,8 @@ async function seedWallet(
 }
 
 async function seedReferrals(userId: string) {
-  if (await prisma.referral.count({ where: { referrerUserId: userId } })) return;
+  if (await prisma.referral.count({ where: { referrerUserId: userId } }))
+    return;
   const at = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000);
   const completed = (refereeName: string, daysAgo: number) => ({
     referrerUserId: userId,

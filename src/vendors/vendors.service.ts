@@ -12,6 +12,15 @@ import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
 import { removeVendorUploadUrl } from './vendor-upload.config';
 
+const SIZE_VARIANTS = new Set(['xs', 's', 'm', 'l', 'xl', 'xxl']);
+
+function normalizeVariantType(value: string) {
+  const normalized = value.trim().replace(/\s+/g, ' ');
+  return SIZE_VARIANTS.has(normalized.toLowerCase())
+    ? normalized.toUpperCase()
+    : normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 @Injectable()
 export class VendorsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -85,17 +94,27 @@ export class VendorsService {
       );
     }
 
+    const normalizedVariants = Array.from(
+      dto.variants.reduce((variants, variant) => {
+        const type = normalizeVariantType(variant.type);
+        variants.set(type, (variants.get(type) ?? 0) + variant.quantity);
+        return variants;
+      }, new Map<string, number>()),
+      ([type, quantity]) => ({ quantity, type }),
+    );
+
     return this.prisma.product.create({
       data: {
         category: dto.category,
+        description: dto.description,
         imageUrls,
+        mainCategory: dto.mainCategory,
         name: dto.name,
         quantity: dto.quantity,
+        specifications: dto.specifications,
+        subCategories: dto.subCategories,
         unitPrice: dto.unitPrice,
-        variants: dto.variants.map((variant) => ({
-          quantity: variant.quantity,
-          type: variant.type,
-        })),
+        variants: normalizedVariants,
         vendorProfileId: profile.id,
       },
     });
