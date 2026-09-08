@@ -255,6 +255,7 @@ describe('VendorsService', () => {
       {
         category: 'Fashion & Apparel',
         name: 'Jorani air sneakers',
+        promoPrice: 110000,
         quantity: 3,
         unitPrice: 134000,
         variants: [{ quantity: 2, type: 'Black / 42' }],
@@ -267,11 +268,36 @@ describe('VendorsService', () => {
         category: 'Fashion & Apparel',
         imageUrls: ['/uploads/products/shoe.png'],
         name: 'Jorani air sneakers',
+        promoPrice: 110000,
         quantity: 3,
         unitPrice: 134000,
         variants: [{ quantity: 2, type: 'Black / 42' }],
         vendorProfileId: 'profile-id',
       },
     });
+  });
+
+  it('rejects a promo price that is not below the actual price', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      id: 'profile-id',
+      setupCompleted: true,
+    });
+
+    await expect(
+      service.createProduct(
+        'vendor-id',
+        {
+          category: 'Fashion & Apparel',
+          name: 'Jorani air sneakers',
+          promoPrice: 134000,
+          quantity: 3,
+          unitPrice: 134000,
+          variants: [],
+        },
+        ['/uploads/products/shoe.png'],
+      ),
+    ).rejects.toThrow('Promo price must be lower than the actual price.');
+    expect(prisma.product.create).not.toHaveBeenCalled();
   });
 });

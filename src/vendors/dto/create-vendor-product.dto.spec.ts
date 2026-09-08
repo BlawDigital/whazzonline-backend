@@ -11,6 +11,7 @@ describe('CreateVendorProductDto', () => {
       category: 'Fashion & Apparel',
       name: 'Jorani air sneakers',
       quantity: '3',
+      promoPrice: '110000',
       unitPrice: '134000',
       variants: '[{"type":"Black / 42","quantity":2}]',
     });
@@ -18,6 +19,7 @@ describe('CreateVendorProductDto', () => {
     await expect(validate(dto)).resolves.toEqual([]);
     expect(dto).toMatchObject({
       quantity: 3,
+      promoPrice: 110000,
       unitPrice: 134000,
       variants: [{ quantity: 2, type: 'Black / 42' }],
     });

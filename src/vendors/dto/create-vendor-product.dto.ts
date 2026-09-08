@@ -75,6 +75,12 @@ export class CreateVendorProductDto {
   @Min(1)
   unitPrice!: number;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  promoPrice?: number;
+
   @Type(() => Number)
   @IsInt()
   @Min(0)

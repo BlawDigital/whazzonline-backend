@@ -52,6 +52,9 @@ export class MarketplaceService {
         location: `${product.vendorProfile.city}, ${product.vendorProfile.state}`,
         name: product.name,
         price: `₦${product.unitPrice.toLocaleString()}`,
+        salePrice: product.promoPrice
+          ? `₦${product.promoPrice.toLocaleString()}`
+          : undefined,
         seller: product.vendorProfile.storeName,
         sku: product.id,
         description: product.description,

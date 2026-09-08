@@ -93,6 +93,11 @@ export class VendorsService {
         'Complete your vendor setup before adding products.',
       );
     }
+    if (dto.promoPrice && dto.promoPrice >= dto.unitPrice) {
+      throw new BadRequestException(
+        'Promo price must be lower than the actual price.',
+      );
+    }
 
     const normalizedVariants = Array.from(
       dto.variants.reduce((variants, variant) => {
@@ -110,6 +115,7 @@ export class VendorsService {
         imageUrls,
         mainCategory: dto.mainCategory,
         name: dto.name,
+        promoPrice: dto.promoPrice,
         quantity: dto.quantity,
         specifications: dto.specifications,
         subCategories: dto.subCategories,

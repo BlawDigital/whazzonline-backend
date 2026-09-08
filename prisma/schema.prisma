@@ -237,6 +237,7 @@ model Product {
   description    String?
   specifications Json          @default("{}")
   unitPrice      Int
+  promoPrice     Int?
   quantity       Int
   variants       Json          @default("[]")
   imageUrls      String[]
