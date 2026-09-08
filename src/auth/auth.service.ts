@@ -5,17 +5,28 @@ import { PrismaService } from "prisma/prisma.service";
 import { RegisterDto } from "./dto/register.dto";
 import { LoginDto } from "./dto/login.dto";
 import * as bcrypt from "bcrypt";
+import { JwtService } from "@nestjs/jwt";
 @Injectable()
 export class AuthService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly otpService: OtpService,
+        private readonly jwtService: JwtService,
     ) { }
 
     // ============================================================
     // PHONE OTP
     // ============================================================
 
+    private async generateToken(user: { id: string; phone: string | null; email: string | null; }) {
+        const payload = {
+            sub: user.id,
+            phone: user.phone,
+            email: user.email,
+        };
+
+        return this.jwtService.signAsync(payload);
+    }
     async sendPhoneOtp(phone: string) {
         return this.otpService.sendPhoneOtp(phone);
     }
@@ -35,7 +46,6 @@ export class AuthService {
     // ============================================================
     // REGISTER
     // ============================================================
-
     async register(registerDto: RegisterDto) {
         const {
             phone,
@@ -47,15 +57,45 @@ export class AuthService {
         } = registerDto;
 
         // Check phone
-        const existingPhone = await this.prisma.user.findUnique({
+        const existingUser = await this.prisma.user.findUnique({
             where: {
                 phone,
             },
         });
 
-        if (existingPhone) {
+        if (existingUser) {
             throw new ConflictException(
                 "An account with this phone number already exists.",
+            );
+        }
+
+        // Check the MOST RECENT OTP
+        const latestOtp = await this.prisma.phoneOtp.findFirst({
+            where: {
+                phone,
+            },
+            orderBy: {
+                createdAt: "desc",
+            },
+        });
+
+        if (!latestOtp) {
+            throw new ConflictException(
+                "Please verify your phone number first.",
+            );
+        }
+
+        // The latest OTP must be successfully verified
+        if (!latestOtp.verified) {
+            throw new ConflictException(
+                "Please verify your phone number before creating an account.",
+            );
+        }
+
+        // The latest OTP must not be expired
+        if (latestOtp.expiresAt < new Date()) {
+            throw new ConflictException(
+                "Your OTP has expired. Please request a new OTP.",
             );
         }
 
@@ -74,25 +114,10 @@ export class AuthService {
             }
         }
 
-        // Check phone verification
-        const verifiedOtp = await this.prisma.phoneOtp.findFirst({
-            where: {
-                phone,
-                verified: true,
-            },
-            orderBy: {
-                createdAt: "desc",
-            },
-        });
-
-        if (!verifiedOtp) {
-            throw new ConflictException(
-                "Phone number has not been verified.",
-            );
-        }
-
         // Hash password
-        const passwordHash = password ? await bcrypt.hash(password, 12) : null;
+        const passwordHash = password
+            ? await bcrypt.hash(password, 12)
+            : null;
 
         // Determine role
         const roleByRegistrationType = {
@@ -100,6 +125,7 @@ export class AuthService {
             SELLER: "VENDOR",
             BUSINESS: "BUSINESS",
         } as const;
+
         const role = roleByRegistrationType[registrationType];
 
         // Create account
@@ -117,11 +143,16 @@ export class AuthService {
             },
         });
 
+        const accessToken = await this.generateToken(user);
+
         return {
             message: "Account created successfully.",
+            accessToken,
             user: this.toPublicUser(user),
         };
     }
+
+
 
     // ============================================================
     // LOGIN
@@ -173,15 +204,32 @@ export class AuthService {
                 "Invalid email/phone or password.",
             );
         }
-
+        const accessToken = await this.generateToken(user);
         return {
             message: "Login successful.",
+            accessToken,
             user: this.toPublicUser(user),
+
         };
     }
 
     private toPublicUser<T extends { passwordHash: unknown }>(user: T) {
         const { passwordHash: _passwordHash, ...publicUser } = user;
         return publicUser;
+    }
+    async getCurrentUser(userId: string) {
+        const user = await this.prisma.user.findUnique({
+            where: {
+                id: userId,
+            },
+        });
+
+        if (!user) {
+            throw new NotFoundException(
+                "User not found.",
+            );
+        }
+
+        return user;
     }
 }
