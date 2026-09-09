@@ -52,9 +52,13 @@ export class AuthService {
       include: { vendorProfile: { select: { setupCompleted: true } } },
     });
 
+    const publicUser = user ? this.toPublicUser(user) : null;
+    const accessToken = user ? await this.generateToken(user) : null;
+
     return {
       ...verification,
-      user: user ? this.toPublicUser(user) : null,
+      accessToken,
+      user: publicUser,
     };
   }
 

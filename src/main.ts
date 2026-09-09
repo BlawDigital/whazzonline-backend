@@ -12,8 +12,8 @@ async function bootstrap() {
   });
 
   app.enableCors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
 
@@ -24,10 +24,7 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
-  console.log(
-    "JWT_SECRET loaded:",
-    !!process.env.JWT_SECRET,
-  );
+  console.log('JWT_SECRET loaded:', !!process.env.JWT_SECRET);
   await app.listen(process.env.PORT ?? 3000);
 }
 

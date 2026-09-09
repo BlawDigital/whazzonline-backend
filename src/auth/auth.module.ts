@@ -1,6 +1,5 @@
-import 'dotenv/config';
 import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -13,10 +12,26 @@ import { ResendEmailOtpProvider } from './otp/resend-email-otp.provider';
 
 @Module({
   imports: [
-    JwtModule.register({
+    ConfigModule,
+    JwtModule.registerAsync({
       global: true,
-      secret: process.env.JWT_SECRET,
-      signOptions: { expiresIn: '7d' },
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => {
+        const secret = config.get<string>('JWT_SECRET')?.trim();
+        if (!secret) {
+          throw new Error(
+            'JWT_SECRET is required. Configure it in the environment before starting the server.',
+          );
+        }
+        if (secret.length < 32) {
+          throw new Error('JWT_SECRET must contain at least 32 characters.');
+        }
+
+        return {
+          secret,
+          signOptions: { expiresIn: '7d' },
+        };
+      },
     }),
   ],
   controllers: [AuthController],

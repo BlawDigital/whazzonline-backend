@@ -19,9 +19,46 @@ describe('AuthService contact credentials', () => {
     verifyEmailOtp: jest.fn(),
     verifyPhoneOtp: jest.fn(),
   };
-  const service = new AuthService(prisma as never, otpService as never);
+  const jwtService = {
+    signAsync: jest.fn(),
+  };
+  const service = new AuthService(
+    prisma as never,
+    otpService as never,
+    jwtService as never,
+  );
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jwtService.signAsync.mockResolvedValue('signed-access-token');
+  });
+
+  it('issues a token when phone verification restores an existing user', async () => {
+    otpService.verifyPhoneOtp.mockResolvedValue({
+      message: 'Phone number verified successfully.',
+      verified: true,
+    });
+    prisma.user.findFirst.mockResolvedValue({
+      email: null,
+      id: 'user-1',
+      passwordHash: null,
+      phone: '+2348012345678',
+      vendorProfile: null,
+    });
+
+    const result = await service.verifyPhoneOtp('+2348012345678', '123456');
+
+    expect(jwtService.signAsync).toHaveBeenCalledWith({
+      email: null,
+      phone: '+2348012345678',
+      sub: 'user-1',
+    });
+    expect(result).toMatchObject({
+      accessToken: 'signed-access-token',
+      user: { id: 'user-1' },
+      verified: true,
+    });
+  });
 
   it('does not send an email change code for a credential already in use', async () => {
     prisma.user.findUnique
