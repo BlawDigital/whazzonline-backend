@@ -16,6 +16,7 @@ import { CommerceService } from './commerce.service';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateReturnDto } from './dto/create-return.dto';
+import { CreateTrustReviewDto } from './dto/create-trust-review.dto';
 import { ReportOrderIssueDto } from './dto/report-order-issue.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
 
@@ -72,5 +73,13 @@ export class CommerceController {
     @Body() dto: CreateReturnDto,
   ) {
     return this.commerce.createReturn(request.user.sub, dto);
+  }
+
+  @Post('trust-reviews')
+  createTrustReview(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: CreateTrustReviewDto,
+  ) {
+    return this.commerce.createTrustReview(request.user.sub, dto);
   }
 }

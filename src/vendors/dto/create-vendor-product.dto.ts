@@ -36,7 +36,7 @@ export class CreateVendorProductDto {
 
   @IsOptional()
   @Transform(({ value }) => {
-    if (Array.isArray(value)) return value;
+    if (Array.isArray(value)) return value as unknown[];
     if (typeof value !== 'string' || value.trim() === '') return [];
     try {
       return JSON.parse(value) as unknown;
@@ -74,12 +74,6 @@ export class CreateVendorProductDto {
   @IsInt()
   @Min(1)
   unitPrice!: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  promoPrice?: number;
 
   @Type(() => Number)
   @IsInt()

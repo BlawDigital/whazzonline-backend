@@ -14,7 +14,9 @@ describe('VendorsService', () => {
   const prisma = {
     product: {
       create: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
+      update: jest.fn(),
     },
     user: { findUnique: jest.fn() },
     vendorProfile: {
@@ -255,9 +257,11 @@ describe('VendorsService', () => {
   it('returns the vendor storefront with active products', async () => {
     prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
     prisma.vendorProfile.findUnique.mockResolvedValue({
+      _count: { trustReviews: 0 },
       id: 'profile-id',
       products: [{ id: 'product-id', status: 'ACTIVE' }],
       storeName: 'Example Store',
+      trustReviews: [],
       user: { avatarUrl: '/uploads/users/avatar.png' },
       userId: 'vendor-id',
     });
@@ -268,6 +272,8 @@ describe('VendorsService', () => {
         avatarUrl: '/uploads/users/avatar.png',
         id: 'profile-id',
         storeName: 'Example Store',
+        trustReviewCount: 0,
+        trustReviews: [],
         userId: 'vendor-id',
       },
     });
@@ -308,7 +314,6 @@ describe('VendorsService', () => {
       {
         category: 'Fashion & Apparel',
         name: 'Jorani air sneakers',
-        promoPrice: 110000,
         quantity: 3,
         unitPrice: 134000,
         variants: [{ quantity: 2, type: 'Black / 42' }],
@@ -321,7 +326,6 @@ describe('VendorsService', () => {
         category: 'Fashion & Apparel',
         imageUrls: ['/uploads/products/shoe.png'],
         name: 'Jorani air sneakers',
-        promoPrice: 110000,
         quantity: 3,
         unitPrice: 134000,
         variants: [{ quantity: 2, type: 'Black / 42' }],
@@ -330,27 +334,44 @@ describe('VendorsService', () => {
     });
   });
 
-  it('rejects a promo price that is not below the actual price', async () => {
+  it('creates a time-limited offer for a vendor-owned product', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-09-09T12:00:00.000Z'));
     prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
-    prisma.vendorProfile.findUnique.mockResolvedValue({
-      id: 'profile-id',
-      setupCompleted: true,
+    prisma.product.findFirst.mockResolvedValue({
+      id: 'product-id',
+      unitPrice: 134000,
+    });
+    prisma.product.update.mockResolvedValue({ id: 'product-id' });
+
+    await service.createProductOffer('vendor-id', 'product-id', {
+      durationHours: 24,
+      promoPrice: 110000,
+    });
+
+    expect(prisma.product.update).toHaveBeenCalledWith({
+      where: { id: 'product-id' },
+      data: {
+        promoEndsAt: new Date('2026-09-10T12:00:00.000Z'),
+        promoPrice: 110000,
+        promoStartsAt: new Date('2026-09-09T12:00:00.000Z'),
+      },
+    });
+    jest.useRealTimers();
+  });
+
+  it('rejects an offer price that is not below the actual price', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.product.findFirst.mockResolvedValue({
+      id: 'product-id',
+      unitPrice: 134000,
     });
 
     await expect(
-      service.createProduct(
-        'vendor-id',
-        {
-          category: 'Fashion & Apparel',
-          name: 'Jorani air sneakers',
-          promoPrice: 134000,
-          quantity: 3,
-          unitPrice: 134000,
-          variants: [],
-        },
-        ['/uploads/products/shoe.png'],
-      ),
-    ).rejects.toThrow('Promo price must be lower than the actual price.');
-    expect(prisma.product.create).not.toHaveBeenCalled();
+      service.createProductOffer('vendor-id', 'product-id', {
+        durationHours: 72,
+        promoPrice: 134000,
+      }),
+    ).rejects.toThrow('Offer price must be lower than the actual price.');
+    expect(prisma.product.update).not.toHaveBeenCalled();
   });
 });

@@ -74,11 +74,12 @@ model User {
 
   vendorProfile  VendorProfile?
   wallet         Wallet?
-  referrals      Referral[]         @relation("Referrer")
+  referrals      Referral[]          @relation("Referrer")
   cartItems      CommerceCartItem[]
   orders         CommerceOrder[]
   orderIssues    OrderIssue[]
   returnRequests ReturnRequest[]
+  trustReviews   VendorTrustReview[] @relation("TrustReviewer")
 
   @@index([email])
   @@index([phone])
@@ -214,7 +215,8 @@ model VendorProfile {
   reviewStatus      VendorReviewStatus @default(DRAFT)
   setupCompleted    Boolean            @default(false)
 
-  products Product[]
+  products     Product[]
+  trustReviews VendorTrustReview[]
 
   @@index([category])
   @@index([state, city])
@@ -242,6 +244,8 @@ model Product {
   specifications Json          @default("{}")
   unitPrice      Int
   promoPrice     Int?
+  promoStartsAt  DateTime?
+  promoEndsAt    DateTime?
   quantity       Int
   variants       Json          @default("[]")
   imageUrls      String[]
@@ -252,6 +256,7 @@ model Product {
   @@index([vendorProfileId, status])
   @@index([category])
   @@index([createdAt])
+  @@index([promoStartsAt, promoEndsAt])
 }
 
 model CommerceCartItem {
@@ -303,6 +308,7 @@ model CommerceOrder {
   items          CommerceOrderItem[]
   issues         OrderIssue[]
   returnRequests ReturnRequest[]
+  trustReviews   VendorTrustReview[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -333,6 +339,24 @@ model CommerceOrderItem {
 
   @@index([orderId])
   @@index([productId])
+}
+
+model VendorTrustReview {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reviewerUserId  String
+  reviewer        User          @relation("TrustReviewer", fields: [reviewerUserId], references: [id], onDelete: Cascade)
+  vendorProfileId String
+  vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  orderId         String
+  order           CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reason          String
+
+  @@unique([reviewerUserId, vendorProfileId, orderId])
+  @@index([vendorProfileId, createdAt])
+  @@index([orderId])
 }
 
 model OrderIssue {

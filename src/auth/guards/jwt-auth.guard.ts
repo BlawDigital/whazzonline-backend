@@ -1,41 +1,40 @@
 import {
-    CanActivate,
-    ExecutionContext,
-    Injectable,
-    UnauthorizedException,
-} from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-    constructor(
-        private readonly jwtService: JwtService,
-    ) { }
+  constructor(private readonly jwtService: JwtService) {}
 
-    async canActivate(context: ExecutionContext,): Promise<boolean> {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest();
 
-        const request = context.switchToHttp().getRequest();
+    const authHeader = request.headers.authorization;
 
-        const authHeader = request.headers.authorization;
-
-        if (!authHeader) {
-            throw new UnauthorizedException("Authentication required.",);
-        }
-
-        const [type, token] = authHeader.split(" ");
-
-        if (type !== "Bearer" || !token) {
-            throw new UnauthorizedException( "Invalid authorization header.",);
-        }
-
-        try {
-            const payload = await this.jwtService.verifyAsync(token);
-
-            request.user = payload;
-
-            return true;
-        } catch {
-            throw new UnauthorizedException("Invalid or expired authentication token.", );
-        }
+    if (!authHeader) {
+      throw new UnauthorizedException('Authentication required.');
     }
+
+    const [type, token] = authHeader.split(' ');
+
+    if (type !== 'Bearer' || !token) {
+      throw new UnauthorizedException('Invalid authorization header.');
+    }
+
+    try {
+      const payload = await this.jwtService.verifyAsync(token);
+
+      request.user = payload;
+
+      return true;
+    } catch {
+      throw new UnauthorizedException(
+        'Invalid or expired authentication token.',
+      );
+    }
+  }
 }

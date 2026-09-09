@@ -15,6 +15,7 @@ import {
 } from '@nestjs/platform-express';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
@@ -55,6 +56,11 @@ export class VendorsController {
     return this.vendorsService.findProducts(userId);
   }
 
+  @Get(':userId/trust-reviews')
+  findTrustReviews(@Param('userId') userId: string) {
+    return this.vendorsService.findTrustReviews(userId);
+  }
+
   @Post(':userId/products')
   @UseInterceptors(FilesInterceptor('images', 5, productUploadOptions))
   async createProduct(
@@ -77,6 +83,15 @@ export class VendorsController {
       removeProductUploads(images);
       throw error;
     }
+  }
+
+  @Post(':userId/products/:productId/offer')
+  createProductOffer(
+    @Param('userId') userId: string,
+    @Param('productId') productId: string,
+    @Body() dto: CreateProductOfferDto,
+  ) {
+    return this.vendorsService.createProductOffer(userId, productId, dto);
   }
 
   @Put(':userId/profile')

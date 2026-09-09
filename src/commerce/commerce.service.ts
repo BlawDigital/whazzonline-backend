@@ -8,6 +8,7 @@ import { PrismaService } from 'prisma/prisma.service';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { CheckoutDto } from './dto/checkout.dto';
 import { CreateReturnDto } from './dto/create-return.dto';
+import { CreateTrustReviewDto } from './dto/create-trust-review.dto';
 import { ReportOrderIssueDto } from './dto/report-order-issue.dto';
 
 const SERVICE_FEE = 6;
@@ -15,6 +16,21 @@ const DELIVERY_FEE = 13;
 
 function sameVariants(left: unknown, right: unknown) {
   return JSON.stringify(left ?? {}) === JSON.stringify(right ?? {});
+}
+
+function activePromoPrice(product: {
+  promoEndsAt: Date | null;
+  promoPrice: number | null;
+  promoStartsAt: Date | null;
+}) {
+  const now = Date.now();
+  return product.promoPrice &&
+    product.promoStartsAt &&
+    product.promoEndsAt &&
+    product.promoStartsAt.getTime() <= now &&
+    product.promoEndsAt.getTime() > now
+    ? product.promoPrice
+    : null;
 }
 
 @Injectable()
@@ -60,6 +76,7 @@ export class CommerceService {
     items: Parameters<CommerceService['mapItem']>[0][];
     issues: { id: string }[];
     returnRequests: { id: string }[];
+    trustReviews: { vendorProfile: { userId: string } }[];
   }) {
     return {
       completedAt: order.completedAt?.toISOString(),
@@ -79,6 +96,9 @@ export class CommerceService {
         : undefined,
       status: order.status,
       total: order.total,
+      trustedVendorIds: order.trustReviews.map(
+        (review) => review.vendorProfile.userId,
+      ),
     };
   }
 
@@ -94,6 +114,9 @@ export class CommerceService {
           items: true,
           issues: { select: { id: true } },
           returnRequests: { select: { id: true } },
+          trustReviews: {
+            select: { vendorProfile: { select: { userId: true } } },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -136,12 +159,13 @@ export class CommerceService {
       throw new BadRequestException('The requested quantity is not available.');
     }
 
-    const unitPrice = product.promoPrice ?? product.unitPrice;
+    const promoPrice = activePromoPrice(product);
+    const unitPrice = promoPrice ?? product.unitPrice;
     const data = {
       deliveryAddress: dto.deliveryAddress,
       imageUri: product.imageUrls[0] ?? dto.imageUri,
       name: product.name,
-      originalPrice: product.promoPrice ? product.unitPrice : null,
+      originalPrice: promoPrice ? product.unitPrice : null,
       productId: product.id,
       quantity: nextQuantity,
       selectedColor: dto.selectedColor,
@@ -215,11 +239,12 @@ export class CommerceService {
                 `${product.name} does not have enough stock.`,
               );
             }
+            const promoPrice = activePromoPrice(product);
             return {
               deliveryAddress: dto.address.label,
               imageUri: product.imageUrls[0] ?? item.imageUri,
               name: product.name,
-              originalPrice: product.promoPrice ? product.unitPrice : null,
+              originalPrice: promoPrice ? product.unitPrice : null,
               productId: product.id,
               quantity: item.quantity,
               selectedColor: item.selectedColor,
@@ -227,7 +252,7 @@ export class CommerceService {
               selectedVariants: item.selectedVariants ?? {},
               sku: product.id,
               subtitle: item.subtitle,
-              unitPrice: product.promoPrice ?? product.unitPrice,
+              unitPrice: promoPrice ?? product.unitPrice,
               vendorId: product.vendorProfile.userId,
               vendorName: product.vendorProfile.storeName,
             };
@@ -362,6 +387,71 @@ export class CommerceService {
       id: request.id,
       orderId: request.orderId,
       status: 'requested' as const,
+    };
+  }
+
+  async createTrustReview(userId: string, dto: CreateTrustReviewDto) {
+    const reason = dto.reason.trim();
+    if (reason.length < 10) {
+      throw new BadRequestException(
+        'Explain why you trust this seller in at least 10 characters.',
+      );
+    }
+    const order = await this.prisma.commerceOrder.findFirst({
+      where: { id: dto.orderId, userId },
+      include: { items: { select: { vendorId: true } } },
+    });
+    if (!order) throw new NotFoundException('Order not found.');
+    if (order.status !== 'delivered') {
+      throw new BadRequestException(
+        'Trust reviews can only be submitted after delivery.',
+      );
+    }
+    if (!order.items.some((item) => item.vendorId === dto.vendorId)) {
+      throw new BadRequestException(
+        'This seller is not part of the selected order.',
+      );
+    }
+
+    const vendorProfile = await this.prisma.vendorProfile.findUnique({
+      where: { userId: dto.vendorId },
+      select: { id: true },
+    });
+    if (!vendorProfile) throw new NotFoundException('Seller not found.');
+    const existing = await this.prisma.vendorTrustReview.findUnique({
+      where: {
+        reviewerUserId_vendorProfileId_orderId: {
+          orderId: order.id,
+          reviewerUserId: userId,
+          vendorProfileId: vendorProfile.id,
+        },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        'You have already reviewed this seller for this order.',
+      );
+    }
+
+    const review = await this.prisma.vendorTrustReview.create({
+      data: {
+        orderId: order.id,
+        reason,
+        reviewerUserId: userId,
+        vendorProfileId: vendorProfile.id,
+      },
+    });
+    const trustCount = await this.prisma.vendorTrustReview.count({
+      where: { vendorProfileId: vendorProfile.id },
+    });
+    return {
+      createdAt: review.createdAt.toISOString(),
+      id: review.id,
+      orderId: review.orderId,
+      reason: review.reason,
+      trustCount,
+      vendorId: dto.vendorId,
     };
   }
 }

@@ -9,7 +9,10 @@ export class ReferralsService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found.');
     const [referrals, wallet] = await Promise.all([
-      this.prisma.referral.findMany({ where: { referrerUserId: userId }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.referral.findMany({
+        where: { referrerUserId: userId },
+        orderBy: { createdAt: 'desc' },
+      }),
       this.prisma.wallet.findUnique({ where: { userId } }),
     ]);
     const successful = referrals.filter((item) => item.status === 'COMPLETED');
@@ -19,7 +22,10 @@ export class ReferralsService {
         pending: referrals.filter((item) => item.status === 'PENDING').length,
         successful: successful.length,
         total: referrals.length,
-        totalRewards: successful.reduce((sum, item) => sum + item.rewardAmount, 0),
+        totalRewards: successful.reduce(
+          (sum, item) => sum + item.rewardAmount,
+          0,
+        ),
       },
       walletReferralBonus: wallet?.referralBonus ?? 0,
       referrals,

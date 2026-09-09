@@ -7,6 +7,7 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
@@ -50,17 +51,55 @@ export class VendorsService {
     const profile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
       include: {
+        _count: { select: { trustReviews: true } },
         products: {
           where: { status: 'ACTIVE' },
           orderBy: { createdAt: 'desc' },
         },
         user: { select: { avatarUrl: true } },
+        trustReviews: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            createdAt: true,
+            id: true,
+            reason: true,
+            reviewer: {
+              select: {
+                avatarUrl: true,
+                city: true,
+                firstName: true,
+                lastName: true,
+                state: true,
+              },
+            },
+          },
+          take: 50,
+        },
       },
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
 
-    const { products, user, ...store } = profile;
-    return { products, profile: { ...store, avatarUrl: user.avatarUrl } };
+    const { _count, products, trustReviews, user, ...store } = profile;
+    return {
+      products,
+      profile: {
+        ...store,
+        avatarUrl: user.avatarUrl,
+        trustReviewCount: _count.trustReviews,
+        trustReviews: trustReviews.map((review) => ({
+          avatarUrl: review.reviewer.avatarUrl,
+          createdAt: review.createdAt.toISOString(),
+          id: review.id,
+          location: [review.reviewer.city, review.reviewer.state]
+            .filter(Boolean)
+            .join(', '),
+          reviewerName: review.reviewer.firstName
+            ? `${review.reviewer.firstName}${review.reviewer.lastName ? ` ${review.reviewer.lastName.slice(0, 1)}.` : ''}`
+            : 'Verified buyer',
+          reason: review.reason,
+        })),
+      },
+    };
   }
 
   async findProducts(userId: string) {
@@ -75,6 +114,51 @@ export class VendorsService {
       where: { vendorProfileId: profile.id, status: 'ACTIVE' },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async findTrustReviews(userId: string) {
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: {
+        id: true,
+        trustReviews: {
+          orderBy: { createdAt: 'desc' },
+          select: {
+            createdAt: true,
+            id: true,
+            reason: true,
+            reviewer: {
+              select: {
+                avatarUrl: true,
+                city: true,
+                firstName: true,
+                lastName: true,
+                state: true,
+              },
+            },
+          },
+          take: 50,
+        },
+        _count: { select: { trustReviews: true } },
+      },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    return {
+      count: profile._count.trustReviews,
+      reviews: profile.trustReviews.map((review) => ({
+        avatarUrl: review.reviewer.avatarUrl,
+        createdAt: review.createdAt.toISOString(),
+        id: review.id,
+        location: [review.reviewer.city, review.reviewer.state]
+          .filter(Boolean)
+          .join(', '),
+        reviewerName: review.reviewer.firstName
+          ? `${review.reviewer.firstName}${review.reviewer.lastName ? ` ${review.reviewer.lastName.slice(0, 1)}.` : ''}`
+          : 'Verified buyer',
+        reason: review.reason,
+      })),
+    };
   }
 
   async createProduct(
@@ -93,12 +177,6 @@ export class VendorsService {
         'Complete your vendor setup before adding products.',
       );
     }
-    if (dto.promoPrice && dto.promoPrice >= dto.unitPrice) {
-      throw new BadRequestException(
-        'Promo price must be lower than the actual price.',
-      );
-    }
-
     const normalizedVariants = Array.from(
       dto.variants.reduce((variants, variant) => {
         const type = normalizeVariantType(variant.type);
@@ -115,7 +193,6 @@ export class VendorsService {
         imageUrls,
         mainCategory: dto.mainCategory,
         name: dto.name,
-        promoPrice: dto.promoPrice,
         quantity: dto.quantity,
         specifications: dto.specifications,
         subCategories: dto.subCategories,
@@ -123,6 +200,33 @@ export class VendorsService {
         variants: normalizedVariants,
         vendorProfileId: profile.id,
       },
+    });
+  }
+
+  async createProductOffer(
+    userId: string,
+    productId: string,
+    dto: CreateProductOfferDto,
+  ) {
+    await this.requireVendorUser(userId);
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, vendorProfile: { userId }, status: 'ACTIVE' },
+      select: { id: true, unitPrice: true },
+    });
+    if (!product) throw new NotFoundException('Product not found.');
+    if (dto.promoPrice >= product.unitPrice) {
+      throw new BadRequestException(
+        'Offer price must be lower than the actual price.',
+      );
+    }
+
+    const promoStartsAt = new Date();
+    const promoEndsAt = new Date(
+      promoStartsAt.getTime() + dto.durationHours * 60 * 60 * 1000,
+    );
+    return this.prisma.product.update({
+      where: { id: product.id },
+      data: { promoEndsAt, promoPrice: dto.promoPrice, promoStartsAt },
     });
   }
 
