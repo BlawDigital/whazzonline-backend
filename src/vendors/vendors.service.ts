@@ -205,14 +205,16 @@ export class VendorsService {
   }
 
   async submitProfile(userId: string, dto: SubmitVendorProfileDto) {
-    await this.requireVendorUser(userId);
+    const user = await this.requireVendorUser(userId);
     const existing = await this.prisma.vendorProfile.findUnique({
       where: { userId },
     });
     if (!existing) throw new NotFoundException('Vendor profile not found.');
 
     const identityComplete = Boolean(
-      existing.logoUrl && existing.bannerUrl && existing.cacUrl,
+      existing.logoUrl &&
+      existing.bannerUrl &&
+      (user.registrationType !== 'BUSINESS' || existing.cacUrl),
     );
     const bankComplete = Boolean(
       existing.bankName &&

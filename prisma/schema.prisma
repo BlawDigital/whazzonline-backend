@@ -72,9 +72,13 @@ model User {
   isVerified Boolean @default(false)
   isActive   Boolean @default(true)
 
-  vendorProfile VendorProfile?
-  wallet        Wallet?
-  referrals     Referral[]     @relation("Referrer")
+  vendorProfile  VendorProfile?
+  wallet         Wallet?
+  referrals      Referral[]         @relation("Referrer")
+  cartItems      CommerceCartItem[]
+  orders         CommerceOrder[]
+  orderIssues    OrderIssue[]
+  returnRequests ReturnRequest[]
 
   @@index([email])
   @@index([phone])
@@ -243,7 +247,134 @@ model Product {
   imageUrls      String[]
   status         ProductStatus @default(ACTIVE)
 
+  cartItems CommerceCartItem[]
+
   @@index([vendorProfileId, status])
   @@index([category])
   @@index([createdAt])
+}
+
+model CommerceCartItem {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  vendorId         String
+  vendorName       String
+  name             String
+  subtitle         String
+  imageUri         String
+  sku              String
+  unitPrice        Int
+  originalPrice    Int?
+  quantity         Int
+  selectedColor    String?
+  selectedSize     String?
+  selectedVariants Json    @default("{}")
+  deliveryAddress  String
+
+  @@index([userId, createdAt])
+  @@index([productId])
+}
+
+model CommerceOrder {
+  id          String    @id @default(uuid())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  userId          String
+  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveryAddress String
+  latitude        Float
+  longitude       Float
+  paymentMethod   String
+  status          String @default("confirmed")
+  subtotal        Int
+  serviceFee      Int
+  deliveryFee     Int
+  total           Int
+
+  items          CommerceOrderItem[]
+  issues         OrderIssue[]
+  returnRequests ReturnRequest[]
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+model CommerceOrderItem {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+
+  orderId          String
+  order            CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId        String
+  vendorId         String
+  vendorName       String
+  name             String
+  subtitle         String
+  imageUri         String
+  sku              String
+  unitPrice        Int
+  originalPrice    Int?
+  quantity         Int
+  selectedColor    String?
+  selectedSize     String?
+  selectedVariants Json          @default("{}")
+  deliveryAddress  String
+
+  returnItems ReturnRequestItem[]
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model OrderIssue {
+  id          String        @id @default(uuid())
+  createdAt   DateTime      @default(now())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId     String
+  order       CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId      String?
+  type        String
+  description String
+  status      String        @default("reported")
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+}
+
+model ReturnRequest {
+  id          String              @id @default(uuid())
+  createdAt   DateTime            @default(now())
+  userId      String
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orderId     String
+  order       CommerceOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reason      String
+  description String
+  status      String              @default("requested")
+  items       ReturnRequestItem[]
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+}
+
+model ReturnRequestItem {
+  id              String            @id @default(uuid())
+  returnRequestId String
+  returnRequest   ReturnRequest     @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  orderItemId     String
+  orderItem       CommerceOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  quantity        Int
+
+  @@index([returnRequestId])
+  @@index([orderItemId])
 }

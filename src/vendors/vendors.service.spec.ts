@@ -167,7 +167,10 @@ describe('VendorsService', () => {
   });
 
   it('submits a complete vendor profile for review', async () => {
-    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.user.findUnique.mockResolvedValue({
+      registrationType: 'SELLER',
+      role: 'VENDOR',
+    });
     prisma.vendorProfile.findUnique.mockResolvedValue({
       bankAccountName: 'Ada Vendor',
       bankAccountNumber: '0123456789',
@@ -192,11 +195,61 @@ describe('VendorsService', () => {
         reviewStatus: 'PENDING',
         sellerType: 'BOTH',
         setupCompleted: true,
+        // Jest asymmetric matchers are intentionally typed as any.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         submittedAt: expect.any(Date),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         termsAcceptedAt: expect.any(Date),
       },
       where: { userId: 'vendor-id' },
     });
+  });
+
+  it('does not require a CAC document for an individual seller', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      registrationType: 'SELLER',
+      role: 'VENDOR',
+    });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      bankAccountName: 'Ada Vendor',
+      bankAccountNumber: '0123456789',
+      bankCode: '011',
+      bankName: 'First Bank of Nigeria',
+      bannerUrl: '/uploads/vendors/banner.png',
+      cacUrl: null,
+      logoUrl: '/uploads/vendors/logo.png',
+    });
+    prisma.vendorProfile.update.mockResolvedValue({ setupCompleted: true });
+
+    await expect(
+      service.submitProfile('vendor-id', {
+        sellerType: 'RETAILER',
+        termsAccepted: true,
+      }),
+    ).resolves.toEqual({ setupCompleted: true });
+  });
+
+  it('still requires a CAC document for a business account', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      registrationType: 'BUSINESS',
+      role: 'BUSINESS',
+    });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      bankAccountName: 'Whazz Business',
+      bankAccountNumber: '0123456789',
+      bankCode: '011',
+      bankName: 'First Bank of Nigeria',
+      bannerUrl: '/uploads/vendors/banner.png',
+      cacUrl: null,
+      logoUrl: '/uploads/vendors/logo.png',
+    });
+
+    await expect(
+      service.submitProfile('business-id', {
+        sellerType: 'BOTH',
+        termsAccepted: true,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('returns the vendor storefront with active products', async () => {
