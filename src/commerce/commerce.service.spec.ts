@@ -9,6 +9,13 @@ import { CommerceService } from './commerce.service';
 describe('CommerceService trust reviews', () => {
   const prisma = {
     commerceOrder: { findFirst: jest.fn() },
+    product: { findFirst: jest.fn() },
+    productLike: {
+      count: jest.fn(),
+      deleteMany: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
+    },
     vendorProfile: { findUnique: jest.fn() },
     vendorTrustReview: {
       count: jest.fn(),
@@ -107,5 +114,39 @@ describe('CommerceService trust reviews', () => {
         vendorId: 'vendor-id',
       }),
     ).rejects.toThrow('already reviewed this seller');
+  });
+
+  it('persists a product love and returns the current count', async () => {
+    prisma.product.findFirst.mockResolvedValue({ id: 'product-id' });
+    prisma.productLike.upsert.mockResolvedValue({ id: 'like-id' });
+    prisma.productLike.count.mockResolvedValue(3);
+
+    await expect(
+      service.likeProduct('buyer-id', 'product-id'),
+    ).resolves.toEqual({
+      liked: true,
+      likeCount: 3,
+      productId: 'product-id',
+    });
+    expect(prisma.productLike.upsert).toHaveBeenCalledWith({
+      where: {
+        userId_productId: { productId: 'product-id', userId: 'buyer-id' },
+      },
+      create: { productId: 'product-id', userId: 'buyer-id' },
+      update: {},
+    });
+  });
+
+  it('removes a product love idempotently', async () => {
+    prisma.productLike.deleteMany.mockResolvedValue({ count: 1 });
+    prisma.productLike.count.mockResolvedValue(2);
+
+    await expect(
+      service.unlikeProduct('buyer-id', 'product-id'),
+    ).resolves.toEqual({
+      liked: false,
+      likeCount: 2,
+      productId: 'product-id',
+    });
   });
 });

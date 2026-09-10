@@ -7,6 +7,7 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 import { AddCartItemDto } from './dto/add-cart-item.dto';
 import { CheckoutDto } from './dto/checkout.dto';
+import { productSku } from '../common/product-sku';
 import { CreateReturnDto } from './dto/create-return.dto';
 import { CreateTrustReviewDto } from './dto/create-trust-review.dto';
 import { ReportOrderIssueDto } from './dto/report-order-issue.dto';
@@ -171,7 +172,7 @@ export class CommerceService {
       selectedColor: dto.selectedColor,
       selectedSize: dto.selectedSize,
       selectedVariants: variants,
-      sku: product.id,
+      sku: productSku(product.id),
       subtitle: dto.subtitle,
       unitPrice,
       userId,
@@ -250,7 +251,7 @@ export class CommerceService {
               selectedColor: item.selectedColor,
               selectedSize: item.selectedSize,
               selectedVariants: item.selectedVariants ?? {},
-              sku: product.id,
+              sku: productSku(product.id),
               subtitle: item.subtitle,
               unitPrice: promoPrice ?? product.unitPrice,
               vendorId: product.vendorProfile.userId,
@@ -307,7 +308,45 @@ export class CommerceService {
       await transaction.commerceCartItem.deleteMany({ where: { userId } });
       return created;
     });
-    return { id: order.id, total: order.total };
+    return { id: order.id, paymentStatus: 'simulated', total: order.total };
+  }
+
+  async productLikes(userId: string) {
+    const likes = await this.prisma.productLike.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      select: { productId: true },
+    });
+    return { productIds: likes.map((like) => like.productId) };
+  }
+
+  async likeProduct(userId: string, productId: string) {
+    const product = await this.prisma.product.findFirst({
+      where: {
+        id: productId,
+        status: 'ACTIVE',
+        vendorProfile: { setupCompleted: true },
+      },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('Product not found.');
+    await this.prisma.productLike.upsert({
+      where: { userId_productId: { productId, userId } },
+      create: { productId, userId },
+      update: {},
+    });
+    const likeCount = await this.prisma.productLike.count({
+      where: { productId },
+    });
+    return { liked: true, likeCount, productId };
+  }
+
+  async unlikeProduct(userId: string, productId: string) {
+    await this.prisma.productLike.deleteMany({ where: { productId, userId } });
+    const likeCount = await this.prisma.productLike.count({
+      where: { productId },
+    });
+    return { liked: false, likeCount, productId };
   }
 
   async completeOrder(userId: string, id: string) {

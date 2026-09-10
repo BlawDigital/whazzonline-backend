@@ -259,7 +259,7 @@ describe('VendorsService', () => {
     prisma.vendorProfile.findUnique.mockResolvedValue({
       _count: { trustReviews: 0 },
       id: 'profile-id',
-      products: [{ id: 'product-id', status: 'ACTIVE' }],
+      products: [{ id: 'product-id', likeCount: 0, status: 'ACTIVE' }],
       storeName: 'Example Store',
       trustReviews: [],
       user: { avatarUrl: '/uploads/users/avatar.png' },
@@ -267,7 +267,7 @@ describe('VendorsService', () => {
     });
 
     await expect(service.findStorefront('vendor-id')).resolves.toEqual({
-      products: [{ id: 'product-id', status: 'ACTIVE' }],
+      products: [{ id: 'product-id', likeCount: 0, status: 'ACTIVE' }],
       profile: {
         avatarUrl: '/uploads/users/avatar.png',
         id: 'profile-id',

@@ -80,6 +80,7 @@ model User {
   orderIssues    OrderIssue[]
   returnRequests ReturnRequest[]
   trustReviews   VendorTrustReview[] @relation("TrustReviewer")
+  productLikes   ProductLike[]
 
   @@index([email])
   @@index([phone])
@@ -252,11 +253,25 @@ model Product {
   status         ProductStatus @default(ACTIVE)
 
   cartItems CommerceCartItem[]
+  likes     ProductLike[]
 
   @@index([vendorProfileId, status])
   @@index([category])
   @@index([createdAt])
   @@index([promoStartsAt, promoEndsAt])
+}
+
+model ProductLike {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([productId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model CommerceCartItem {

@@ -2,11 +2,16 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
+  ForbiddenException,
   Get,
   Param,
   Post,
+  Patch,
   Put,
   UploadedFiles,
+  Req,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import {
@@ -19,12 +24,16 @@ import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
+import { UpdateStorefrontContentDto } from './dto/update-storefront-content.dto';
+import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import {
   publicVendorUploadUrl,
   removeUploadedFiles,
   vendorUploadOptions,
 } from './vendor-upload.config';
 import { VendorsService } from './vendors.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import {
   productUploadOptions,
   publicProductUploadUrl,
@@ -92,6 +101,55 @@ export class VendorsController {
     @Body() dto: CreateProductOfferDto,
   ) {
     return this.vendorsService.createProductOffer(userId, productId, dto);
+  }
+
+  @Patch(':userId/products/:productId')
+  @UseGuards(JwtAuthGuard)
+  updateProduct(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Param('productId') productId: string,
+    @Body() dto: UpdateVendorProductDto,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own products.');
+    return this.vendorsService.updateProduct(userId, productId, dto);
+  }
+
+  @Post(':userId/products/:productId/archive')
+  @UseGuards(JwtAuthGuard)
+  archiveProduct(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Param('productId') productId: string,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own products.');
+    return this.vendorsService.archiveProduct(userId, productId);
+  }
+
+  @Delete(':userId/products/:productId')
+  @UseGuards(JwtAuthGuard)
+  deleteProduct(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Param('productId') productId: string,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own products.');
+    return this.vendorsService.deleteProduct(userId, productId);
+  }
+
+  @Patch(':userId/storefront')
+  @UseGuards(JwtAuthGuard)
+  updateStorefront(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Body() dto: UpdateStorefrontContentDto,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own storefront.');
+    return this.vendorsService.updateStorefront(userId, dto);
   }
 
   @Put(':userId/profile')

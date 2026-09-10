@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from 'prisma/prisma.service';
+import { productSku } from '../common/product-sku';
 
 const categories = [
   { id: 'cars', label: 'Cars' },
@@ -35,6 +36,7 @@ export class MarketplaceService {
       this.prisma.product.findMany({
         where: { status: 'ACTIVE', vendorProfile: { setupCompleted: true } },
         include: {
+          _count: { select: { likes: true } },
           vendorProfile: {
             select: { city: true, state: true, storeName: true, userId: true },
           },
@@ -92,6 +94,7 @@ export class MarketplaceService {
           category: categoryFor(product.category),
           dateListed: dateListed(product.createdAt),
           id: product.id,
+          likeCount: product._count?.likes ?? 0,
           imageUri: product.imageUrls[0] ?? '',
           imageUrls: product.imageUrls,
           location: `${product.vendorProfile.city}, ${product.vendorProfile.state}`,
@@ -105,7 +108,7 @@ export class MarketplaceService {
             : undefined,
           seller: product.vendorProfile.storeName,
           vendorId: product.vendorProfile.userId,
-          sku: product.id,
+          sku: productSku(product.id),
           description: product.description,
           specifications: product.specifications,
           variants: product.variants,

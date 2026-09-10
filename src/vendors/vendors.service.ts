@@ -11,6 +11,8 @@ import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
+import { UpdateStorefrontContentDto } from './dto/update-storefront-content.dto';
+import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { removeVendorUploadUrl } from './vendor-upload.config';
 
 const SIZE_VARIANTS = new Set(['xs', 's', 'm', 'l', 'xl', 'xxl']);
@@ -55,6 +57,7 @@ export class VendorsService {
         products: {
           where: { status: 'ACTIVE' },
           orderBy: { createdAt: 'desc' },
+          include: { _count: { select: { likes: true } } },
         },
         user: { select: { avatarUrl: true } },
         trustReviews: {
@@ -81,7 +84,10 @@ export class VendorsService {
 
     const { _count, products, trustReviews, user, ...store } = profile;
     return {
-      products,
+      products: products.map(({ _count: productCount, ...product }) => ({
+        ...product,
+        likeCount: productCount?.likes ?? 0,
+      })),
       profile: {
         ...store,
         avatarUrl: user.avatarUrl,
@@ -228,6 +234,47 @@ export class VendorsService {
       where: { id: product.id },
       data: { promoEndsAt, promoPrice: dto.promoPrice, promoStartsAt },
     });
+  }
+
+  private async requireOwnedProduct(userId: string, productId: string) {
+    await this.requireVendorUser(userId);
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, vendorProfile: { userId } },
+    });
+    if (!product) throw new NotFoundException('Product not found.');
+    return product;
+  }
+
+  async updateProduct(
+    userId: string,
+    productId: string,
+    dto: UpdateVendorProductDto,
+  ) {
+    await this.requireOwnedProduct(userId, productId);
+    return this.prisma.product.update({ where: { id: productId }, data: dto });
+  }
+
+  async archiveProduct(userId: string, productId: string) {
+    await this.requireOwnedProduct(userId, productId);
+    return this.prisma.product.update({
+      where: { id: productId },
+      data: { status: 'ARCHIVED' },
+    });
+  }
+
+  async deleteProduct(userId: string, productId: string) {
+    await this.requireOwnedProduct(userId, productId);
+    await this.prisma.product.delete({ where: { id: productId } });
+    return { id: productId };
+  }
+
+  async updateStorefront(userId: string, dto: UpdateStorefrontContentDto) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+    return this.prisma.vendorProfile.update({ where: { userId }, data: dto });
   }
 
   async saveProfile(userId: string, dto: SaveVendorProfileDto) {

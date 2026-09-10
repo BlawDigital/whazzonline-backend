@@ -24,7 +24,10 @@ export class CheckoutDto {
 
   @IsInt() @Min(1) itemCount!: number;
   @IsIn(['wallet', 'bank', 'card', 'bnpl']) paymentMethod!: string;
-  @IsInt() @Min(0) total!: number;
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  total?: number;
 
   @IsOptional()
   @IsArray()

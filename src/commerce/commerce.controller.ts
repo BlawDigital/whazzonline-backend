@@ -54,6 +54,27 @@ export class CommerceController {
     return this.commerce.checkout(request.user.sub, dto);
   }
 
+  @Get('product-likes')
+  productLikes(@Req() request: AuthenticatedRequest) {
+    return this.commerce.productLikes(request.user.sub);
+  }
+
+  @Post('products/:productId/like')
+  likeProduct(
+    @Req() request: AuthenticatedRequest,
+    @Param('productId') productId: string,
+  ) {
+    return this.commerce.likeProduct(request.user.sub, productId);
+  }
+
+  @Delete('products/:productId/like')
+  unlikeProduct(
+    @Req() request: AuthenticatedRequest,
+    @Param('productId') productId: string,
+  ) {
+    return this.commerce.unlikeProduct(request.user.sub, productId);
+  }
+
   @Patch('orders/:id')
   updateOrder(@Req() request: AuthenticatedRequest, @Param('id') id: string) {
     return this.commerce.completeOrder(request.user.sub, id);
