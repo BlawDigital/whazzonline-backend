@@ -9,6 +9,12 @@ import { PrismaService } from 'prisma/prisma.service';
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { CreateVendorCategoryDto } from './dto/create-vendor-category.dto';
 import { CreateProductOfferDto } from './dto/create-product-offer.dto';
+import {
+  CreateDeliveryOfferType,
+  CreateOfferDiscountType,
+  CreateOfferDto,
+  CreateOfferType,
+} from './dto/create-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
@@ -269,6 +275,186 @@ export class VendorsService {
     return this.prisma.product.update({
       where: { id: product.id },
       data: { promoEndsAt, promoPrice: dto.promoPrice, promoStartsAt },
+    });
+  }
+
+  async findOffers(userId: string) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    const offers = await this.prisma.offer.findMany({
+      where: { vendorProfileId: profile.id },
+      include: {
+        products: {
+          include: { product: true },
+          orderBy: { product: { createdAt: 'desc' } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const now = new Date();
+    return offers.map((offer) => ({
+      ...offer,
+      status:
+        offer.status === 'DRAFT'
+          ? 'DRAFT'
+          : offer.startsAt > now
+            ? 'SCHEDULED'
+            : offer.endsAt <= now
+              ? 'ENDED'
+              : 'ACTIVE',
+      products: offer.products.map(({ product }) => product),
+    }));
+  }
+
+  async createOffer(userId: string, dto: CreateOfferDto) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    const productIds = [...new Set(dto.productIds)];
+    const products = await this.prisma.product.findMany({
+      where: {
+        id: { in: productIds },
+        status: 'ACTIVE',
+        vendorProfileId: profile.id,
+      },
+    });
+    if (products.length !== productIds.length) {
+      throw new BadRequestException(
+        'Every selected product must be an active product in your store.',
+      );
+    }
+    if (products.some((product) => product.quantity < 1)) {
+      throw new BadRequestException(
+        'Out-of-stock products cannot be added to an offer.',
+      );
+    }
+
+    const isDiscount =
+      dto.type === CreateOfferType.PRICE_DISCOUNT ||
+      dto.type === CreateOfferType.FLASH_SALE;
+    if (isDiscount && (!dto.discountType || !dto.discountValue)) {
+      throw new BadRequestException(
+        'Choose a discount type and enter its value.',
+      );
+    }
+    if (
+      dto.discountType === CreateOfferDiscountType.PERCENTAGE &&
+      (dto.discountValue ?? 0) >= 100
+    ) {
+      throw new BadRequestException('Percentage discount must be below 100%.');
+    }
+
+    const discountedPrice = (unitPrice: number) => {
+      if (!isDiscount || !dto.discountType || !dto.discountValue) return null;
+      if (dto.discountType === CreateOfferDiscountType.PERCENTAGE) {
+        return Math.max(
+          1,
+          unitPrice - Math.floor((unitPrice * dto.discountValue) / 100),
+        );
+      }
+      if (dto.discountType === CreateOfferDiscountType.FIXED_AMOUNT) {
+        return unitPrice - dto.discountValue;
+      }
+      return dto.discountValue;
+    };
+    const promoPrices = products.map((product) => ({
+      id: product.id,
+      price: discountedPrice(product.unitPrice),
+    }));
+    if (promoPrices.some(({ price }) => price !== null && price <= 0)) {
+      throw new BadRequestException(
+        'The discount must leave every product with a positive price.',
+      );
+    }
+    if (
+      promoPrices.some(({ price }, index) =>
+        price === null ? false : price >= products[index].unitPrice,
+      )
+    ) {
+      throw new BadRequestException(
+        'The offer price must be lower than the normal price.',
+      );
+    }
+
+    const individualTotal = products.reduce(
+      (total, product) => total + product.unitPrice,
+      0,
+    );
+    if (
+      dto.type === CreateOfferType.BUNDLE_DEAL &&
+      (!dto.name || !dto.bundlePrice || dto.bundlePrice >= individualTotal)
+    ) {
+      throw new BadRequestException(
+        'Enter a bundle name and a bundle price below the individual total.',
+      );
+    }
+    if (!isDiscount && dto.type === CreateOfferType.DELIVERY) {
+      if (!dto.deliveryType) {
+        throw new BadRequestException('Choose a delivery offer type.');
+      }
+      if (
+        dto.deliveryType === CreateDeliveryOfferType.REDUCED &&
+        (!dto.deliveryFee || dto.deliveryFee < 1)
+      ) {
+        throw new BadRequestException('Enter the reduced delivery fee.');
+      }
+    }
+
+    const startsAt = new Date();
+    const endsAt = new Date(
+      startsAt.getTime() + dto.durationHours * 60 * 60 * 1000,
+    );
+    return this.prisma.$transaction(async (transaction) => {
+      const offer = await transaction.offer.create({
+        data: {
+          applicableLocations: dto.applicableLocations ?? [],
+          bundlePrice: dto.bundlePrice,
+          deliveryFee:
+            dto.deliveryType === CreateDeliveryOfferType.FREE
+              ? 0
+              : dto.deliveryFee,
+          deliveryType: dto.deliveryType,
+          discountType: dto.discountType,
+          discountValue: dto.discountValue,
+          endsAt,
+          minimumOrderValue: dto.minimumOrderValue,
+          name: dto.name,
+          products: {
+            create: productIds.map((productId) => ({ productId })),
+          },
+          startsAt,
+          type: dto.type,
+          vendorProfileId: profile.id,
+        },
+        include: { products: { include: { product: true } } },
+      });
+      await Promise.all(
+        promoPrices.map(({ id, price }) =>
+          price === null
+            ? Promise.resolve()
+            : transaction.product.update({
+                where: { id },
+                data: {
+                  promoEndsAt: endsAt,
+                  promoPrice: price,
+                  promoStartsAt: startsAt,
+                },
+              }),
+        ),
+      );
+      return {
+        ...offer,
+        products: offer.products.map(({ product }) => product),
+      };
     });
   }
 

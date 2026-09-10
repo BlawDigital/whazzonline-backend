@@ -22,6 +22,7 @@ import {
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { CreateVendorCategoryDto } from './dto/create-vendor-category.dto';
 import { CreateProductOfferDto } from './dto/create-product-offer.dto';
+import { CreateOfferDto } from './dto/create-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
 import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
@@ -96,12 +97,39 @@ export class VendorsController {
   }
 
   @Post(':userId/products/:productId/offer')
+  @UseGuards(JwtAuthGuard)
   createProductOffer(
+    @Req() request: AuthenticatedRequest,
     @Param('userId') userId: string,
     @Param('productId') productId: string,
     @Body() dto: CreateProductOfferDto,
   ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own offers.');
     return this.vendorsService.createProductOffer(userId, productId, dto);
+  }
+
+  @Get(':userId/offers')
+  @UseGuards(JwtAuthGuard)
+  findOffers(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only view your own offers.');
+    return this.vendorsService.findOffers(userId);
+  }
+
+  @Post(':userId/offers')
+  @UseGuards(JwtAuthGuard)
+  createOffer(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Body() dto: CreateOfferDto,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own offers.');
+    return this.vendorsService.createOffer(userId, dto);
   }
 
   @Patch(':userId/products/:productId')

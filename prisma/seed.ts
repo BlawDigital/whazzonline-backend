@@ -11,15 +11,25 @@ const prisma = new PrismaClient({
 });
 
 const images = [
-  ['car-camry', 'Toyota Camry', 'Cars', 12000000],
-  ['car-lexus-x350', 'Lexus X350', 'Cars', 9000000],
-  ['fashion-wedding', 'Wedding Dress', 'Fashion', 250000],
-  ['fashion-converse', 'Converse Sneakers', 'Fashion', 85000],
-  ['beauty-set', 'Beauty Care Set', 'Beauty', 35000],
-  ['beauty-bottle', 'Glow Body Lotion', 'Beauty', 18000],
-  ['kids-toys', 'Learning Toy Set', 'Kids', 22000],
-  ['kids-shoes', 'Kids School Shoes', 'Kids', 30000],
+  ['https://images.unsplash.com/photo-1595777457583-95e059d581b8?auto=format&fit=crop&w=900&q=85', 'Women Fashion Dress', 'Fashion', 134000],
+  ['https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=900&q=85', 'Givenchi Designer Bag', 'Fashion', 134000],
+  ['https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=900&q=85', 'Calvin Klein Wristwatch', 'Fashion', 134000],
+  ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=900&q=85', 'Designer Sneakers', 'Fashion', 85000],
+  ['https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=900&q=85', 'Streetwear Collection', 'Fashion', 95000],
+  ['https://images.unsplash.com/photo-1551488831-00ddcb6c6bd3?auto=format&fit=crop&w=900&q=85', 'Classic Fashion Set', 'Fashion', 76000],
+  ['https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&w=900&q=85', 'Toyota Camry', 'Cars', 12000000],
+  ['https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=900&q=85', 'Lexus X350', 'Cars', 9000000],
 ] as const;
+
+const avatarImages = [
+  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=85',
+  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=300&q=85',
+];
+
+const storefrontBanners = [
+  'https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1200&q=85',
+  'https://images.unsplash.com/photo-1487412912498-0447578fcca8?auto=format&fit=crop&w=1200&q=85',
+];
 
 async function seedWallet(
   user: { id: string; firstName: string | null; lastName: string | null },
@@ -152,6 +162,31 @@ async function seedReferrals(userId: string) {
 }
 
 async function main() {
+  await prisma.user.upsert({
+    where: { email: 'seed-buyer@whazzonline.test' },
+    create: {
+      email: 'seed-buyer@whazzonline.test',
+      firstName: 'Katherine',
+      lastName: 'Oluseye',
+      registrationType: 'BUYER',
+      role: 'CUSTOMER',
+      isVerified: true,
+      city: 'Ikeja',
+      state: 'Lagos',
+    },
+    update: {},
+  });
+  await prisma.user.upsert({
+    where: { email: 'seed-business@whazzonline.test' },
+    create: {
+      email: 'seed-business@whazzonline.test',
+      firstName: 'Whazz Business',
+      registrationType: 'BUSINESS',
+      role: 'BUSINESS',
+      isVerified: true,
+    },
+    update: {},
+  });
   for (const [index, storeName] of [
     'Oden Store',
     'Ayil Motors',
@@ -172,6 +207,12 @@ async function main() {
   }
   const users = await prisma.user.findMany({ orderBy: { createdAt: 'asc' } });
   for (const [index, user] of users.entries()) {
+    if (!user.avatarUrl) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { avatarUrl: avatarImages[index % avatarImages.length] },
+      });
+    }
     await seedWallet(user, index);
     await seedReferrals(user.id);
   }
@@ -191,32 +232,147 @@ async function main() {
         lga: 'Lagos Mainland',
         address: '12 Commercial Avenue, Yaba',
         description: 'Curated products from a verified Whazzonline vendor.',
+        bannerUrl: storefrontBanners[index % storefrontBanners.length],
+        logoUrl: avatarImages[(index + 1) % avatarImages.length],
         reviewStatus: 'APPROVED',
         setupCompleted: true,
       },
-      update: {},
+      update: {
+        bannerUrl: storefrontBanners[index % storefrontBanners.length],
+        logoUrl: avatarImages[(index + 1) % avatarImages.length],
+      },
     });
-    if (await prisma.product.count({ where: { vendorProfileId: profile.id } }))
-      continue;
-    const productImages = [
-      images[(index * 2) % images.length],
-      images[(index * 2 + 1) % images.length],
-    ];
-    await prisma.product.createMany({
-      data: productImages.map(([imageKey, name, category, unitPrice]) => ({
+    for (const [productIndex, [imageUrl, name, category, unitPrice]] of images
+      .slice(0, 6)
+      .entries()) {
+      const existing = await prisma.product.findFirst({
+        where: { name, vendorProfileId: profile.id },
+        select: { id: true },
+      });
+      const quantity = [25, 6, 30, 0, 2, 0][productIndex] ?? 12;
+      if (existing) {
+        await prisma.product.update({
+          where: { id: existing.id },
+          data: { imageUrls: [imageUrl], quantity },
+        });
+      } else {
+        await prisma.product.create({
+          data: {
+            vendorProfileId: profile.id,
+            category,
+            mainCategory: category,
+            description: `${name} supplied by ${profile.storeName}.`,
+            name,
+            unitPrice,
+            quantity,
+            imageUrls: [imageUrl],
+            variants: [],
+            status: 'ACTIVE',
+          },
+        });
+      }
+    }
+  }
+
+  const buyers = users.filter((user) => user.role === 'CUSTOMER');
+  const vendorProfiles = await prisma.vendorProfile.findMany({
+    include: { products: { where: { status: 'ACTIVE' }, take: 1 } },
+    orderBy: { createdAt: 'asc' },
+  });
+  for (const buyer of buyers) {
+    for (const profile of vendorProfiles.slice(0, 3)) {
+      const conversation = await prisma.conversation.upsert({
+        where: {
+          buyerUserId_vendorProfileId: {
+            buyerUserId: buyer.id,
+            vendorProfileId: profile.id,
+          },
+        },
+        create: {
+          buyerUserId: buyer.id,
+          vendorProfileId: profile.id,
+          favorite: true,
+        },
+        update: {},
+      });
+      if (
+        !(await prisma.chatMessage.count({
+          where: { conversationId: conversation.id },
+        }))
+      ) {
+        await prisma.chatMessage.create({
+          data: {
+            conversationId: conversation.id,
+            senderUserId: buyer.id,
+            kind: 'TEXT',
+            text: `Hello ${profile.storeName}, is this product available?`,
+          },
+        });
+      }
+    }
+
+    const profile = vendorProfiles[0];
+    const product = profile?.products[0];
+    if (!profile || !product) continue;
+    let order = await prisma.commerceOrder.findFirst({
+      where: {
+        userId: buyer.id,
+        deliveryAddress: 'Seeded completed order',
+      },
+      include: { items: true },
+    });
+    if (!order) {
+      order = await prisma.commerceOrder.create({
+        data: {
+          userId: buyer.id,
+          deliveryAddress: 'Seeded completed order',
+          latitude: 6.5244,
+          longitude: 3.3792,
+          paymentMethod: 'simulated',
+          status: 'delivered',
+          completedAt: new Date(),
+          subtotal: product.unitPrice,
+          serviceFee: 600,
+          deliveryFee: 1500,
+          total: product.unitPrice + 2100,
+          items: {
+            create: {
+              productId: product.id,
+              vendorId: profile.userId,
+              vendorName: profile.storeName,
+              name: product.name,
+              subtitle: profile.category,
+              imageUri: product.imageUrls[0] ?? '',
+              sku: product.id.slice(0, 8).toUpperCase(),
+              unitPrice: product.unitPrice,
+              quantity: 1,
+              deliveryAddress: 'Seeded completed order',
+            },
+          },
+        },
+        include: { items: true },
+      });
+    }
+    await prisma.vendorTrustReview.upsert({
+      where: {
+        reviewerUserId_vendorProfileId_orderId: {
+          reviewerUserId: buyer.id,
+          vendorProfileId: profile.id,
+          orderId: order.id,
+        },
+      },
+      create: {
+        reviewerUserId: buyer.id,
         vendorProfileId: profile.id,
-        category,
-        name,
-        unitPrice,
-        quantity: 12,
-        imageUrls: [imageKey],
-        variants: [],
-        status: 'ACTIVE',
-      })),
+        orderId: order.id,
+        reason:
+          'The seller communicated clearly and delivered exactly what I ordered.',
+      },
+      update: {},
     });
   }
   console.log(
-    `Seeded wallets and referrals for ${users.length} users and marketplace products for ${vendors.length} vendors.`,
+    `Seeded ${users.length} users, ${vendors.length} storefronts, real products, commerce history, trust reviews, wallets, referrals, and conversations.`,
   );
 }
 
