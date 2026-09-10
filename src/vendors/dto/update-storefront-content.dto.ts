@@ -6,6 +6,6 @@ export class UpdateStorefrontContentDto {
   @IsOptional()
   @IsString()
   @MinLength(10)
-  @MaxLength(1000)
+  @MaxLength(300)
   description?: string;
 }

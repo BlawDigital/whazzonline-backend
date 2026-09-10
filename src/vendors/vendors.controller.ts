@@ -20,6 +20,7 @@ import {
 } from '@nestjs/platform-express';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { CreateVendorCategoryDto } from './dto/create-vendor-category.dto';
 import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
@@ -150,6 +151,30 @@ export class VendorsController {
     if (request.user.sub !== userId)
       throw new ForbiddenException('You can only manage your own storefront.');
     return this.vendorsService.updateStorefront(userId, dto);
+  }
+
+  @Post(':userId/categories')
+  @UseGuards(JwtAuthGuard)
+  createCategory(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Body() dto: CreateVendorCategoryDto,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own categories.');
+    return this.vendorsService.createCategory(userId, dto);
+  }
+
+  @Delete(':userId/categories/:categoryId')
+  @UseGuards(JwtAuthGuard)
+  deleteCategory(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Param('categoryId') categoryId: string,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own categories.');
+    return this.vendorsService.deleteCategory(userId, categoryId);
   }
 
   @Put(':userId/profile')

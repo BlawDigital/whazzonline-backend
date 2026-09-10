@@ -7,6 +7,7 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { CreateVendorCategoryDto } from './dto/create-vendor-category.dto';
 import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
@@ -54,8 +55,8 @@ export class VendorsService {
       where: { userId },
       include: {
         _count: { select: { trustReviews: true } },
+        categories: { orderBy: { createdAt: 'asc' } },
         products: {
-          where: { status: 'ACTIVE' },
           orderBy: { createdAt: 'desc' },
           include: { _count: { select: { likes: true } } },
         },
@@ -82,8 +83,30 @@ export class VendorsService {
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
 
-    const { _count, products, trustReviews, user, ...store } = profile;
+    const {
+      _count,
+      categories = [],
+      products,
+      trustReviews,
+      user,
+      ...store
+    } = profile;
     return {
+      categories: categories.map((category) => {
+        const categoryProducts = products.filter(
+          (product) =>
+            product.status !== 'DELETED' &&
+            (product.mainCategory === category.name ||
+              product.category === category.name),
+        );
+        return {
+          ...category,
+          productCount: categoryProducts.length,
+          outOfStock:
+            categoryProducts.length > 0 &&
+            categoryProducts.every((product) => product.quantity < 1),
+        };
+      }),
       products: products.map(({ _count: productCount, ...product }) => ({
         ...product,
         likeCount: productCount?.likes ?? 0,
@@ -192,6 +215,19 @@ export class VendorsService {
       ([type, quantity]) => ({ quantity, type }),
     );
 
+    if (dto.mainCategory) {
+      await this.prisma.vendorCategory.upsert({
+        where: {
+          vendorProfileId_name: {
+            name: dto.mainCategory,
+            vendorProfileId: profile.id,
+          },
+        },
+        create: { name: dto.mainCategory, vendorProfileId: profile.id },
+        update: {},
+      });
+    }
+
     return this.prisma.product.create({
       data: {
         category: dto.category,
@@ -264,8 +300,39 @@ export class VendorsService {
 
   async deleteProduct(userId: string, productId: string) {
     await this.requireOwnedProduct(userId, productId);
-    await this.prisma.product.delete({ where: { id: productId } });
+    await this.prisma.product.update({
+      where: { id: productId },
+      data: { status: 'DELETED' },
+    });
     return { id: productId };
+  }
+
+  async createCategory(userId: string, dto: CreateVendorCategoryDto) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+    const existing = await this.prisma.vendorCategory.findUnique({
+      where: {
+        vendorProfileId_name: { name: dto.name, vendorProfileId: profile.id },
+      },
+    });
+    if (existing)
+      throw new BadRequestException('This category is already in your store.');
+    return this.prisma.vendorCategory.create({
+      data: { name: dto.name, vendorProfileId: profile.id },
+    });
+  }
+
+  async deleteCategory(userId: string, categoryId: string) {
+    await this.requireVendorUser(userId);
+    const result = await this.prisma.vendorCategory.deleteMany({
+      where: { id: categoryId, vendorProfile: { userId } },
+    });
+    if (!result.count) throw new NotFoundException('Category not found.');
+    return { id: categoryId };
   }
 
   async updateStorefront(userId: string, dto: UpdateStorefrontContentDto) {

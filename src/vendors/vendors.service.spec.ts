@@ -14,9 +14,16 @@ describe('VendorsService', () => {
   const prisma = {
     product: {
       create: jest.fn(),
+      delete: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+    },
+    vendorCategory: {
+      create: jest.fn(),
+      deleteMany: jest.fn(),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
     },
     user: { findUnique: jest.fn() },
     vendorProfile: {
@@ -267,6 +274,7 @@ describe('VendorsService', () => {
     });
 
     await expect(service.findStorefront('vendor-id')).resolves.toEqual({
+      categories: [],
       products: [{ id: 'product-id', likeCount: 0, status: 'ACTIVE' }],
       profile: {
         avatarUrl: '/uploads/users/avatar.png',
@@ -277,6 +285,33 @@ describe('VendorsService', () => {
         userId: 'vendor-id',
       },
     });
+  });
+
+  it('creates a unique category for the vendor storefront', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({ id: 'profile-id' });
+    prisma.vendorCategory.findUnique.mockResolvedValue(null);
+    prisma.vendorCategory.create.mockResolvedValue({
+      id: 'category-id',
+      name: 'Men Fashion',
+    });
+
+    await expect(
+      service.createCategory('vendor-id', { name: 'Men Fashion' }),
+    ).resolves.toMatchObject({ id: 'category-id', name: 'Men Fashion' });
+    expect(prisma.vendorCategory.create).toHaveBeenCalledWith({
+      data: { name: 'Men Fashion', vendorProfileId: 'profile-id' },
+    });
+  });
+
+  it('rejects a duplicate storefront category', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({ id: 'profile-id' });
+    prisma.vendorCategory.findUnique.mockResolvedValue({ id: 'category-id' });
+
+    await expect(
+      service.createCategory('vendor-id', { name: 'Men Fashion' }),
+    ).rejects.toThrow('already in your store');
   });
 
   it('rejects product creation until vendor setup is complete', async () => {
@@ -308,11 +343,13 @@ describe('VendorsService', () => {
       setupCompleted: true,
     });
     prisma.product.create.mockResolvedValue({ id: 'product-id' });
+    prisma.vendorCategory.upsert.mockResolvedValue({ id: 'category-id' });
 
     await service.createProduct(
       'vendor-id',
       {
         category: 'Fashion & Apparel',
+        mainCategory: 'Men Fashion',
         name: 'Jorani air sneakers',
         quantity: 3,
         unitPrice: 134000,
@@ -325,12 +362,23 @@ describe('VendorsService', () => {
       data: {
         category: 'Fashion & Apparel',
         imageUrls: ['/uploads/products/shoe.png'],
+        mainCategory: 'Men Fashion',
         name: 'Jorani air sneakers',
         quantity: 3,
         unitPrice: 134000,
         variants: [{ quantity: 2, type: 'Black / 42' }],
         vendorProfileId: 'profile-id',
       },
+    });
+    expect(prisma.vendorCategory.upsert).toHaveBeenCalledWith({
+      where: {
+        vendorProfileId_name: {
+          name: 'Men Fashion',
+          vendorProfileId: 'profile-id',
+        },
+      },
+      create: { name: 'Men Fashion', vendorProfileId: 'profile-id' },
+      update: {},
     });
   });
 
