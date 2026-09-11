@@ -8,7 +8,13 @@ import { CommerceService } from './commerce.service';
 
 describe('CommerceService trust reviews', () => {
   const prisma = {
-    commerceOrder: { findFirst: jest.fn() },
+    $transaction: jest.fn(),
+    commerceCartItem: { deleteMany: jest.fn(), findMany: jest.fn() },
+    commerceOrder: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+    },
     product: { findFirst: jest.fn() },
     productLike: {
       count: jest.fn(),
@@ -25,7 +31,133 @@ describe('CommerceService trust reviews', () => {
   };
   const service = new CommerceService(prisma as never);
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.$transaction.mockImplementation(
+      async (operation: (transaction: typeof prisma) => unknown) =>
+        operation(prisma),
+    );
+  });
+
+  it('does not expose database-only fields in order item responses', async () => {
+    prisma.commerceCartItem.findMany.mockResolvedValue([]);
+    prisma.commerceOrder.findMany.mockResolvedValue([
+      {
+        completedAt: new Date('2026-09-13T10:00:00.000Z'),
+        createdAt: new Date('2026-09-13T09:00:00.000Z'),
+        deliveryAddress: 'Ikeja, Lagos',
+        deliveryFee: 13,
+        id: 'order-id',
+        issues: [],
+        items: [
+          {
+            createdAt: new Date('2026-09-13T09:00:00.000Z'),
+            deliveryAddress: 'Ikeja, Lagos',
+            id: 'order-item-id',
+            imageUri: 'https://example.com/product.jpg',
+            name: 'Product',
+            orderId: 'order-id',
+            originalPrice: null,
+            productId: 'product-id',
+            quantity: 1,
+            selectedColor: null,
+            selectedSize: null,
+            selectedVariants: {},
+            sku: 'WHAZ-123456',
+            subtitle: 'Fashion',
+            unitPrice: 2_000,
+            vendorId: 'vendor-id',
+            vendorName: 'Vendor',
+          },
+        ],
+        returnRequests: [],
+        serviceFee: 6,
+        status: 'delivered',
+        subtotal: 2_000,
+        total: 2_019,
+        trustReviews: [],
+      },
+    ]);
+
+    const snapshot = await service.snapshot('buyer-id');
+    const item = snapshot.completedOrders[0]?.items[0];
+    expect(item).not.toHaveProperty('createdAt');
+    expect(item).not.toHaveProperty('orderId');
+    expect(item).toMatchObject({
+      id: 'order-item-id',
+      productId: 'product-id',
+    });
+  });
+
+  it('checks out the exact visible cart rows without rejecting a stale count', async () => {
+    prisma.commerceCartItem.findMany.mockResolvedValue([
+      {
+        deliveryAddress: 'Ikeja, Lagos',
+        id: 'cart-item-id',
+        imageUri: 'https://example.com/item.jpg',
+        name: 'Old display name',
+        originalPrice: null,
+        productId: 'product-id',
+        quantity: 1,
+        selectedColor: null,
+        selectedSize: null,
+        selectedVariants: {},
+        sku: 'old-sku',
+        subtitle: 'Fashion',
+        unitPrice: 1,
+        userId: 'buyer-id',
+        vendorId: 'vendor-id',
+        vendorName: 'Vendor',
+        product: {
+          category: 'Fashion',
+          id: 'product-id',
+          imageUrls: ['https://example.com/current.jpg'],
+          name: 'Current product name',
+          promoEndsAt: null,
+          promoPrice: null,
+          promoStartsAt: null,
+          quantity: 5,
+          status: 'ACTIVE',
+          unitPrice: 12_000_000,
+          vendorProfile: {
+            setupCompleted: true,
+            storeName: 'Vendor',
+            userId: 'vendor-id',
+          },
+        },
+      },
+    ]);
+    prisma.commerceOrder.create.mockResolvedValue({
+      id: 'order-id',
+      total: 24_000_019,
+    });
+
+    await expect(
+      service.checkout('buyer-id', {
+        address: { label: 'Ikeja, Lagos', latitude: 6.6, longitude: 3.35 },
+        itemCount: 999,
+        cartSelection: [{ cartItemId: 'cart-item-id', quantity: 2 }],
+        paymentMethod: 'wallet',
+      }),
+    ).resolves.toEqual({
+      id: 'order-id',
+      paymentStatus: 'simulated',
+      total: 24_000_019,
+    });
+    expect(prisma.commerceOrder.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          subtotal: 24_000_000,
+          items: {
+            create: [expect.objectContaining({ quantity: 2 })],
+          },
+        }),
+      }),
+    );
+    expect(prisma.commerceCartItem.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['cart-item-id'] }, userId: 'buyer-id' },
+    });
+  });
 
   it('persists one trust reason for a delivered vendor order', async () => {
     prisma.commerceOrder.findFirst.mockResolvedValue({

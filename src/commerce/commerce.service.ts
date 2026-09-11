@@ -56,11 +56,21 @@ export class CommerceService {
     deliveryAddress: string;
   }) {
     return {
-      ...item,
+      deliveryAddress: item.deliveryAddress,
+      id: item.id,
+      imageUri: item.imageUri,
+      name: item.name,
       originalPrice: item.originalPrice ?? undefined,
+      productId: item.productId,
+      quantity: item.quantity,
       selectedColor: item.selectedColor ?? undefined,
       selectedSize: item.selectedSize ?? undefined,
       selectedVariants: (item.selectedVariants ?? {}) as Record<string, string>,
+      sku: item.sku,
+      subtitle: item.subtitle,
+      unitPrice: item.unitPrice,
+      vendorId: item.vendorId,
+      vendorName: item.vendorName,
     };
   }
 
@@ -164,7 +174,7 @@ export class CommerceService {
     const unitPrice = promoPrice ?? product.unitPrice;
     const data = {
       deliveryAddress: dto.deliveryAddress,
-      imageUri: product.imageUrls[0] ?? dto.imageUri,
+      imageUri: product.imageUrls[0] ?? dto.imageUri ?? '',
       name: product.name,
       originalPrice: promoPrice ? product.unitPrice : null,
       productId: product.id,
@@ -173,7 +183,7 @@ export class CommerceService {
       selectedSize: dto.selectedSize,
       selectedVariants: variants,
       sku: productSku(product.id),
-      subtitle: dto.subtitle,
+      subtitle: dto.subtitle ?? product.category,
       unitPrice,
       userId,
       vendorId: product.vendorProfile.userId,
@@ -213,76 +223,78 @@ export class CommerceService {
   }
 
   async checkout(userId: string, dto: CheckoutDto) {
-    const cartItems = await this.prisma.commerceCartItem.findMany({
-      where: { userId },
-    });
-    const submittedItems = dto.items ?? [];
-    const orderItems = submittedItems.length
-      ? await Promise.all(
-          submittedItems.map(async (item) => {
-            const product = await this.prisma.product.findFirst({
-              where: {
-                id: item.productId,
-                status: 'ACTIVE',
-                vendorProfile: { setupCompleted: true },
-              },
-              include: {
-                vendorProfile: { select: { storeName: true, userId: true } },
-              },
-            });
-            if (!product) {
-              throw new NotFoundException(
-                `${item.name || 'A product'} is no longer available.`,
-              );
-            }
-            if (item.quantity > product.quantity) {
-              throw new BadRequestException(
-                `${product.name} does not have enough stock.`,
-              );
-            }
-            const promoPrice = activePromoPrice(product);
-            return {
-              deliveryAddress: dto.address.label,
-              imageUri: product.imageUrls[0] ?? item.imageUri,
-              name: product.name,
-              originalPrice: promoPrice ? product.unitPrice : null,
-              productId: product.id,
-              quantity: item.quantity,
-              selectedColor: item.selectedColor,
-              selectedSize: item.selectedSize,
-              selectedVariants: item.selectedVariants ?? {},
-              sku: productSku(product.id),
-              subtitle: item.subtitle,
-              unitPrice: promoPrice ?? product.unitPrice,
-              vendorId: product.vendorProfile.userId,
-              vendorName: product.vendorProfile.storeName,
-            };
-          }),
-        )
-      : cartItems.map((item) => ({
-          deliveryAddress: item.deliveryAddress,
-          imageUri: item.imageUri,
-          name: item.name,
-          originalPrice: item.originalPrice,
-          productId: item.productId,
-          quantity: item.quantity,
-          selectedColor: item.selectedColor,
-          selectedSize: item.selectedSize,
-          selectedVariants: item.selectedVariants ?? {},
-          sku: item.sku,
-          subtitle: item.subtitle,
-          unitPrice: item.unitPrice,
-          vendorId: item.vendorId,
-          vendorName: item.vendorName,
-        }));
-    if (!orderItems.length)
-      throw new BadRequestException('Your cart is empty.');
-    const itemCount = orderItems.reduce((sum, item) => sum + item.quantity, 0);
-    if (itemCount !== dto.itemCount) {
+    const requestedItems = dto.cartSelection ?? [];
+    const requestedIds = requestedItems.map((item) => item.cartItemId);
+    if (new Set(requestedIds).size !== requestedIds.length) {
       throw new BadRequestException(
-        'Your cart changed. Review it before checking out.',
+        'A cart item was submitted more than once.',
       );
     }
+    const cartItems = await this.prisma.commerceCartItem.findMany({
+      where: {
+        userId,
+        ...(requestedIds.length ? { id: { in: requestedIds } } : {}),
+      },
+      include: {
+        product: {
+          include: {
+            vendorProfile: {
+              select: { setupCompleted: true, storeName: true, userId: true },
+            },
+          },
+        },
+      },
+    });
+    if (requestedIds.length && cartItems.length !== requestedIds.length) {
+      throw new BadRequestException(
+        'One of the displayed cart items is no longer available. Return to your cart and try again.',
+      );
+    }
+    const cartById = new Map(cartItems.map((item) => [item.id, item]));
+    const selectedItems = requestedItems.length
+      ? requestedItems.map((requested) => ({
+          cartItem: cartById.get(requested.cartItemId)!,
+          quantity: requested.quantity,
+        }))
+      : cartItems.map((cartItem) => ({
+          cartItem,
+          quantity: cartItem.quantity,
+        }));
+    const orderItems = selectedItems.map(({ cartItem, quantity }) => {
+      const product = cartItem.product;
+      if (
+        product.status !== 'ACTIVE' ||
+        !product.vendorProfile.setupCompleted
+      ) {
+        throw new NotFoundException(
+          `${product.name || 'A product'} is no longer available.`,
+        );
+      }
+      if (quantity > product.quantity) {
+        throw new BadRequestException(
+          `${product.name} does not have enough stock.`,
+        );
+      }
+      const promoPrice = activePromoPrice(product);
+      return {
+        deliveryAddress: dto.address.label,
+        imageUri: product.imageUrls[0] ?? cartItem.imageUri ?? '',
+        name: product.name,
+        originalPrice: promoPrice ? product.unitPrice : null,
+        productId: product.id,
+        quantity,
+        selectedColor: cartItem.selectedColor,
+        selectedSize: cartItem.selectedSize,
+        selectedVariants: cartItem.selectedVariants ?? {},
+        sku: productSku(product.id),
+        subtitle: cartItem.subtitle || product.category,
+        unitPrice: promoPrice ?? product.unitPrice,
+        vendorId: product.vendorProfile.userId,
+        vendorName: product.vendorProfile.storeName,
+      };
+    });
+    if (!orderItems.length)
+      throw new BadRequestException('Your cart is empty.');
     const subtotal = orderItems.reduce(
       (sum, item) => sum + item.unitPrice * item.quantity,
       0,
@@ -305,7 +317,12 @@ export class CommerceService {
           },
         },
       });
-      await transaction.commerceCartItem.deleteMany({ where: { userId } });
+      await transaction.commerceCartItem.deleteMany({
+        where: {
+          id: { in: selectedItems.map(({ cartItem }) => cartItem.id) },
+          userId,
+        },
+      });
       return created;
     });
     return { id: order.id, paymentStatus: 'simulated', total: order.total };
@@ -368,16 +385,28 @@ export class CommerceService {
   async reportIssue(userId: string, dto: ReportOrderIssueDto) {
     const order = await this.prisma.commerceOrder.findFirst({
       where: { id: dto.orderId, userId },
-      include: { items: { select: { id: true } } },
+      include: { items: { select: { id: true, productId: true } } },
     });
     if (!order) throw new NotFoundException('Order not found.');
-    if (dto.itemId && !order.items.some((item) => item.id === dto.itemId)) {
+    const orderItem = dto.itemId
+      ? (order.items.find((item) => item.id === dto.itemId) ??
+        order.items.find((item) => item.productId === dto.productId))
+      : dto.productId
+        ? order.items.find((item) => item.productId === dto.productId)
+        : undefined;
+    if ((dto.itemId || dto.productId) && !orderItem) {
       throw new BadRequestException(
         'The selected item is not part of this order.',
       );
     }
     const issue = await this.prisma.orderIssue.create({
-      data: { ...dto, description: dto.description.trim(), userId },
+      data: {
+        description: dto.description.trim(),
+        itemId: orderItem?.id,
+        orderId: dto.orderId,
+        type: dto.type,
+        userId,
+      },
     });
     return {
       id: issue.id,
@@ -401,7 +430,9 @@ export class CommerceService {
       );
     }
     for (const requested of dto.items) {
-      const item = order.items.find((entry) => entry.id === requested.itemId);
+      const item =
+        order.items.find((entry) => entry.id === requested.itemId) ??
+        order.items.find((entry) => entry.productId === requested.productId);
       if (!item || requested.quantity > item.quantity) {
         throw new BadRequestException(
           'Check the selected return items and quantities.',
@@ -415,10 +446,19 @@ export class CommerceService {
         reason: dto.reason,
         userId,
         items: {
-          create: dto.items.map((item) => ({
-            orderItemId: item.itemId,
-            quantity: item.quantity,
-          })),
+          create: dto.items.map((requested) => {
+            const item =
+              order.items.find((entry) => entry.id === requested.itemId) ??
+              order.items.find(
+                (entry) => entry.productId === requested.productId,
+              );
+            if (!item) {
+              throw new BadRequestException(
+                'Check the selected return items and quantities.',
+              );
+            }
+            return { orderItemId: item.id, quantity: requested.quantity };
+          }),
         },
       },
     });

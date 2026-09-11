@@ -4,6 +4,7 @@ import {
   IsArray,
   IsIn,
   IsInt,
+  IsOptional,
   IsString,
   MaxLength,
   Min,
@@ -12,6 +13,7 @@ import {
 
 class ReturnItemDto {
   @IsString() itemId!: string;
+  @IsOptional() @IsString() productId?: string;
   @IsInt() @Min(1) quantity!: number;
 }
 

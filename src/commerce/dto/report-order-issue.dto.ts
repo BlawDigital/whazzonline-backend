@@ -9,6 +9,7 @@ import {
 export class ReportOrderIssueDto {
   @IsString() orderId!: string;
   @IsOptional() @IsString() itemId?: string;
+  @IsOptional() @IsString() productId?: string;
   @IsIn([
     'Damaged item',
     'Wrong product',
