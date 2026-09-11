@@ -6,6 +6,8 @@ import { RegisterDto } from "./dto/register.dto";
 import { LoginDto } from "./dto/login.dto";
 import * as bcrypt from "bcrypt";
 import { JwtService } from "@nestjs/jwt";
+import { UpdateProfileDto } from "./dto/update-profile";
+import { first } from "rxjs";
 @Injectable()
 export class AuthService {
     constructor(
@@ -165,9 +167,7 @@ export class AuthService {
         } = loginDto;
 
         if (!email && !phone) {
-            throw new ConflictException(
-                "Email or phone number is required.",
-            );
+            throw new ConflictException("Email or phone number is required.",);
         }
 
         const user = email
@@ -183,15 +183,11 @@ export class AuthService {
             });
 
         if (!user) {
-            throw new NotFoundException(
-                "No account was found.",
-            );
+            throw new NotFoundException("No account was found.",);
         }
 
         if (!user.passwordHash) {
-            throw new ConflictException(
-                "This account does not use password login.",
-            );
+            throw new ConflictException("This account does not use password login.",);
         }
 
         const passwordMatches = await bcrypt.compare(
@@ -225,11 +221,54 @@ export class AuthService {
         });
 
         if (!user) {
-            throw new NotFoundException(
-                "User not found.",
-            );
+            throw new NotFoundException("User not found.",);
         }
-
         return user;
+    }
+
+
+    async updateProfile(userId: string, updateProfileDto: UpdateProfileDto) {
+        const user = await this.prisma.user.findUnique({
+            where: {
+                id: userId,
+            },
+        });
+        if (!user) {
+            throw new NotFoundException("User not found.",);
+        }
+        const {
+            firstName,
+            lastName,
+            dateOfBirth,
+            state,
+            city,
+        } = updateProfileDto;
+
+        const updatedUser = await this.prisma.user.update({
+            where: {
+                id: userId,
+            },
+            data: {
+                ...(firstName !== undefined && {
+                    firstName: firstName.trim(),
+                }),
+                ...(lastName !== undefined && {
+                    lastName: lastName.trim(),
+                }),
+                ...(dateOfBirth !== undefined && {
+                    dateOfBirth: new Date(dateOfBirth),
+                }),
+                ...(state !== undefined && {
+                    state: state.trim(),
+                }),
+                ...(city !== undefined && {
+                    city: city.trim(),
+                }),
+            },
+        });
+        return {
+            message: "Profile updated successfully",
+            user: this.toPublicUser(updatedUser),
+        };
     }
 }
