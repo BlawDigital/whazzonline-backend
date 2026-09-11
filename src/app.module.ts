@@ -3,6 +3,12 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from 'prisma/prisma.module';
+import { VendorsModule } from './vendors/vendors.module';
+import { MarketplaceModule } from './marketplace/marketplace.module';
+import { WalletModule } from './wallet/wallet.module';
+import { ReferralsModule } from './referrals/referrals.module';
+import { CommerceModule } from './commerce/commerce.module';
+import { MessagingModule } from './messaging/messaging.module';
 
 @Module({
   imports: [
@@ -12,6 +18,12 @@ import { PrismaModule } from 'prisma/prisma.module';
     PrismaModule,
     AuthModule,
     UsersModule,
+    VendorsModule,
+    MarketplaceModule,
+    WalletModule,
+    ReferralsModule,
+    CommerceModule,
+    MessagingModule,
   ],
 })
-export class AppModule { }
+export class AppModule {}

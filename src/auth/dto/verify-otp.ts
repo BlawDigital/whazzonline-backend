@@ -1,13 +1,12 @@
-import { IsNotEmpty, IsString, Length } from "class-validator";
+import { IsNotEmpty, IsString, Length } from 'class-validator';
 
-export class VerifyPhoneOtpDto{
-    @IsString()
-    @IsNotEmpty()
-    phone!: string;
+export class VerifyPhoneOtpDto {
+  @IsString()
+  @IsNotEmpty()
+  phone!: string;
 
-
-    @IsString()
-    @IsNotEmpty()
-    @Length(6, 6)
-    code!: string;
+  @IsString()
+  @IsNotEmpty()
+  @Length(6, 6)
+  code!: string;
 }
