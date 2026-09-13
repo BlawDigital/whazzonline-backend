@@ -38,7 +38,13 @@ export class MarketplaceService {
         include: {
           _count: { select: { likes: true } },
           vendorProfile: {
-            select: { city: true, state: true, storeName: true, userId: true },
+            select: {
+              address: true,
+              city: true,
+              state: true,
+              storeName: true,
+              userId: true,
+            },
           },
         },
         orderBy: { createdAt: 'desc' },
@@ -47,6 +53,7 @@ export class MarketplaceService {
         where: { setupCompleted: true },
         orderBy: { createdAt: 'desc' },
         select: {
+          address: true,
           bannerUrl: true,
           category: true,
           city: true,
@@ -98,6 +105,14 @@ export class MarketplaceService {
           imageUri: product.imageUrls[0] ?? '',
           imageUrls: product.imageUrls,
           location: `${product.vendorProfile.city}, ${product.vendorProfile.state}`,
+          mapAddress: [
+            product.vendorProfile.address,
+            product.vendorProfile.city,
+            product.vendorProfile.state,
+            'Nigeria',
+          ]
+            .filter(Boolean)
+            .join(', '),
           name: product.name,
           price: `₦${product.unitPrice.toLocaleString()}`,
           salePrice: offerActive
@@ -120,6 +135,9 @@ export class MarketplaceService {
         description: vendor.description,
         id: vendor.userId,
         location: `${vendor.city}, ${vendor.state}`,
+        mapAddress: [vendor.address, vendor.city, vendor.state, 'Nigeria']
+          .filter(Boolean)
+          .join(', '),
         logoUri: vendor.logoUrl,
         name: vendor.storeName,
         trustReviewCount: vendor._count.trustReviews,
