@@ -13,13 +13,14 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
 import { normalizePhone, phoneLookupCandidates } from './phone/normalize-phone';
+import { UpdateProfileDto } from './dto/update-profile';
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly otpService: OtpService,
     private readonly jwtService: JwtService,
-  ) {}
+  ) { }
 
   private generateToken(user: {
     id: string;
@@ -251,8 +252,8 @@ export class AuthService {
     // Check phone
     const existingPhone = normalizedPhone
       ? await this.prisma.user.findFirst({
-          where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
-        })
+        where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
+      })
       : null;
 
     if (existingPhone) {
@@ -279,23 +280,23 @@ export class AuthService {
     // Check phone verification
     const verifiedOtp = normalizedPhone
       ? await this.prisma.phoneOtp.findFirst({
-          where: {
-            phone: normalizedPhone,
-            purpose: 'REGISTRATION',
-            verified: true,
-            consumedAt: null,
-          },
-          orderBy: { createdAt: 'desc' },
-        })
+        where: {
+          phone: normalizedPhone,
+          purpose: 'REGISTRATION',
+          verified: true,
+          consumedAt: null,
+        },
+        orderBy: { createdAt: 'desc' },
+      })
       : await this.prisma.emailOtp.findFirst({
-          where: {
-            email: normalizedEmail!,
-            purpose: 'REGISTRATION',
-            verified: true,
-            consumedAt: null,
-          },
-          orderBy: { createdAt: 'desc' },
-        });
+        where: {
+          email: normalizedEmail!,
+          purpose: 'REGISTRATION',
+          verified: true,
+          consumedAt: null,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
 
     if (!verifiedOtp) {
       throw new ConflictException(
@@ -366,17 +367,17 @@ export class AuthService {
 
     const user = normalizedEmail
       ? await this.prisma.user.findUnique({
-          where: {
-            email: normalizedEmail,
-          },
-          include: { vendorProfile: { select: { setupCompleted: true } } },
-        })
+        where: {
+          email: normalizedEmail,
+        },
+        include: { vendorProfile: { select: { setupCompleted: true } } },
+      })
       : await this.prisma.user.findFirst({
-          where: {
-            phone: { in: phoneLookupCandidates(normalizedPhone!) },
-          },
-          include: { vendorProfile: { select: { setupCompleted: true } } },
-        });
+        where: {
+          phone: { in: phoneLookupCandidates(normalizedPhone!) },
+        },
+        include: { vendorProfile: { select: { setupCompleted: true } } },
+      });
 
     if (!user) {
       throw new UnauthorizedException('Invalid email/phone or password.');
@@ -413,6 +414,65 @@ export class AuthService {
 
     return this.toPublicUser(user);
   }
+
+  async updateProfile(
+    userId: string,
+    updateProfileDto: UpdateProfileDto,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException(
+        "User not found.",
+      );
+    }
+
+    const {
+      firstName,
+      lastName,
+      dateOfBirth,
+      state,
+      city,
+    } = updateProfileDto;
+
+    const updatedUser = await this.prisma.user.update({
+      where: {
+        id: userId,
+      },
+
+      data: {
+        ...(firstName !== undefined && {
+          firstName: firstName.trim(),
+        }),
+
+        ...(lastName !== undefined && {
+          lastName: lastName.trim(),
+        }),
+
+        ...(dateOfBirth !== undefined && {
+          dateOfBirth: dateOfBirth,
+        }),
+
+        ...(state !== undefined && {
+          state: state.trim(),
+        }),
+
+        ...(city !== undefined && {
+          city: city.trim(),
+        }),
+      },
+    });
+
+    return {
+      message: "Profile updated successfully.",
+      user: this.toPublicUser(updatedUser),
+    };
+  }
+
 
   private toPublicUser<
     T extends {

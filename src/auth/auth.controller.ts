@@ -6,6 +6,7 @@ import {
   Post,
   Req,
   UseGuards,
+  Patch,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SendPhoneOtpDto } from './dto/send-otp.dto';
@@ -20,10 +21,11 @@ import {
 } from './dto/password-reset.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from './guards/authenticated-request';
+import { UpdateProfileDto } from './dto/update-profile';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) { }
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
@@ -119,4 +121,18 @@ export class AuthController {
   resetPassword(@Body() dto: PasswordResetUpdateDto) {
     return this.authService.resetPassword(dto.email, dto.code, dto.password);
   }
+
+  @Patch("me/profile")
+  @UseGuards(JwtAuthGuard)
+  async updateProfile(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.authService.updateProfile(
+      request.user.sub,
+      dto,
+    );
+  }
 }
+
+
