@@ -1,8 +1,17 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SendMessageDto } from './dto/send-message.dto';
+import { StartConversationDto } from './dto/start-conversation.dto';
 import { MessagingService } from './messaging.service';
 
 @Controller('buyer/conversations')
@@ -13,6 +22,14 @@ export class MessagingController {
   @Get()
   list(@Req() request: AuthenticatedRequest) {
     return this.messaging.list(request.user.sub);
+  }
+
+  @Post()
+  start(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: StartConversationDto,
+  ) {
+    return this.messaging.start(request.user.sub, dto.vendorId);
   }
 
   @Get(':conversationId/messages')
