@@ -83,6 +83,8 @@ model User {
   productLikes       ProductLike[]
   buyerConversations Conversation[]      @relation("ConversationBuyer")
   sentMessages       ChatMessage[]       @relation("MessageSender")
+  supportTickets SupportTicket[] @relation("SupportTicketOwner")
+  supportMessages SupportMessage[] @relation("SupportMessageSender")
 
   @@index([email])
   @@index([phone])
@@ -358,10 +360,12 @@ model Conversation {
   vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
   favorite        Boolean       @default(false)
   buyerLastReadAt DateTime?
+  sellerLastReadAt DateTime?
   messages        ChatMessage[]
 
   @@unique([buyerUserId, vendorProfileId])
   @@index([buyerUserId, updatedAt])
+  @@index([vendorProfileId, updatedAt])
 }
 
 model ChatMessage {
@@ -374,6 +378,7 @@ model ChatMessage {
   kind           ChatMessageKind
   text           String?
   imageUri       String?
+  productContext Json?
 
   @@index([conversationId, createdAt])
   @@index([senderUserId, createdAt])
@@ -442,6 +447,8 @@ model CommerceOrder {
   issues         OrderIssue[]
   returnRequests ReturnRequest[]
   trustReviews   VendorTrustReview[]
+  fulfillments   SellerFulfillment[]
+  supportTickets SupportTicket[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -503,9 +510,94 @@ model OrderIssue {
   type        String
   description String
   status      String        @default("reported")
+  replies     OrderIssueReply[]
 
   @@index([userId, createdAt])
   @@index([orderId])
+}
+
+model SellerFulfillment {
+  id String @id @default(uuid())
+  orderId String
+  order CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  vendorId String
+  status String @default("pending")
+  rejectionReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  history SellerFulfillmentEvent[]
+  deliveryRequest DeliveryRequest?
+
+  @@unique([orderId, vendorId])
+  @@index([vendorId, updatedAt])
+}
+
+model SellerFulfillmentEvent {
+  id String @id @default(uuid())
+  fulfillmentId String
+  fulfillment SellerFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  status String
+  reason String?
+  actorUserId String
+  createdAt DateTime @default(now())
+
+  @@index([fulfillmentId, createdAt])
+}
+
+model OrderIssueReply {
+  id String @id @default(uuid())
+  issueId String
+  issue OrderIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  authorUserId String
+  text String?
+  evidenceUrls String[] @default([])
+  createdAt DateTime @default(now())
+
+  @@index([issueId, createdAt])
+}
+
+model DeliveryRequest {
+  id String @id @default(uuid())
+  fulfillmentId String @unique
+  fulfillment SellerFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
+  provider String @default("mock")
+  serviceLevel String
+  status String @default("assigned")
+  fee Int
+  etaMinutes Int
+  trackingCode String @unique
+  rider Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SupportTicket {
+  id String @id @default(uuid())
+  ownerUserId String
+  owner User @relation("SupportTicketOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  orderId String?
+  order CommerceOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  category String
+  subject String
+  status String @default("open")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages SupportMessage[]
+  @@index([ownerUserId, updatedAt])
+  @@index([status, updatedAt])
+}
+
+model SupportMessage {
+  id String @id @default(uuid())
+  ticketId String
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderUserId String
+  sender User @relation("SupportMessageSender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  senderRole String
+  text String?
+  attachments Json @default("[]")
+  createdAt DateTime @default(now())
+  @@index([ticketId, createdAt])
 }
 
 model ReturnRequest {
