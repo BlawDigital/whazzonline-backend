@@ -91,6 +91,7 @@ export class ProductsController {
         : '';
     const description = product.description || 'No description provided.';
     return {
+      availableQuantity: product.quantity,
       description,
       pattern: specifications || description,
       productId: product.id,

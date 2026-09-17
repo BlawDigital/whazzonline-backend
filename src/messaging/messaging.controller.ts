@@ -12,6 +12,7 @@ import type { AuthenticatedRequest } from '../auth/guards/authenticated-request'
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SendMessageDto } from './dto/send-message.dto';
 import { StartConversationDto } from './dto/start-conversation.dto';
+import { ConversationTypingDto } from './dto/conversation-typing.dto';
 import { MessagingService } from './messaging.service';
 
 @Controller(['buyer/conversations', 'seller/conversations'])
@@ -52,5 +53,14 @@ export class MessagingController {
   @Post(':conversationId/read')
   read(@Req() request: AuthenticatedRequest, @Param('conversationId') id: string) {
     return this.messaging.read(request.user.sub, id);
+  }
+
+  @Post(':conversationId/typing')
+  typing(
+    @Req() request: AuthenticatedRequest,
+    @Param('conversationId') conversationId: string,
+    @Body() dto: ConversationTypingDto,
+  ) {
+    return this.messaging.typing(request.user.sub, conversationId, dto.typing);
   }
 }

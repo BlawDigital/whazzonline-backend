@@ -13,6 +13,9 @@ type Conversation = Prisma.ConversationGetPayload<{ include: typeof conversation
 
 @Injectable()
 export class MessagingService {
+  private readonly typingWindowMs = 8_000;
+  private readonly typingByConversation = new Map<string, Map<string, number>>();
+
   constructor(private readonly prisma: PrismaService) {}
   private label(value: Date) {
     return new Intl.DateTimeFormat('en-NG', { hour: 'numeric', minute: '2-digit' }).format(value);
@@ -24,6 +27,51 @@ export class MessagingService {
     const conversation = await this.prisma.conversation.findFirst({ where: this.participant(userId, id) });
     if (!conversation) throw new NotFoundException('Conversation not found.');
     return conversation;
+  }
+
+  private pruneTyping(conversationId?: string) {
+    const now = Date.now();
+    const pruneOne = (id: string, users: Map<string, number>) => {
+      for (const [userId, expiresAt] of users.entries()) {
+        if (expiresAt <= now) users.delete(userId);
+      }
+      if (!users.size) this.typingByConversation.delete(id);
+    };
+
+    if (conversationId) {
+      const users = this.typingByConversation.get(conversationId);
+      if (users) pruneOne(conversationId, users);
+      return;
+    }
+
+    for (const [id, users] of this.typingByConversation.entries()) {
+      pruneOne(id, users);
+    }
+  }
+
+  private setTypingState(userId: string, conversationId: string, typing: boolean) {
+    this.pruneTyping(conversationId);
+    if (!typing) {
+      const users = this.typingByConversation.get(conversationId);
+      if (!users) return;
+      users.delete(userId);
+      if (!users.size) this.typingByConversation.delete(conversationId);
+      return;
+    }
+
+    const users = this.typingByConversation.get(conversationId) ?? new Map<string, number>();
+    users.set(userId, Date.now() + this.typingWindowMs);
+    this.typingByConversation.set(conversationId, users);
+  }
+
+  private isOtherParticipantTyping(userId: string, conversationId: string) {
+    this.pruneTyping(conversationId);
+    const users = this.typingByConversation.get(conversationId);
+    if (!users?.size) return false;
+    for (const participantId of users.keys()) {
+      if (participantId !== userId) return true;
+    }
+    return false;
   }
   private mapMessage(message: Prisma.ChatMessageGetPayload<object>, userId: string) {
     return {
@@ -46,12 +94,14 @@ export class MessagingService {
       preview: latest?.text ?? (latest?.kind === 'IMAGE' ? 'Photo' : latest?.kind === 'VOICE' ? 'Voice message' : 'Start a conversation'),
       previewRead: !!(latest && latest.senderUserId === userId && otherRead && otherRead >= latest.createdAt),
       timestampLabel: this.label(latest?.createdAt ?? conversation.updatedAt),
+      typing: this.isOtherParticipantTyping(userId, conversation.id),
       unreadCount, vendorId: conversation.vendorProfile.userId, buyerId: conversation.buyerUserId,
       updatedAt: conversation.updatedAt.toISOString(),
       verified: !seller && conversation.vendorProfile.reviewStatus === 'APPROVED',
     };
   }
   async list(userId: string, sellerOnly = false) {
+    this.pruneTyping();
     const conversations = await this.prisma.conversation.findMany({
       where: sellerOnly ? { vendorProfile: { userId } } : this.participant(userId),
       include: conversationInclude, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
@@ -75,13 +125,33 @@ export class MessagingService {
     const product = await this.prisma.product.findFirst({ where: { id: dto.productId, vendorProfileId, status: 'ACTIVE' } });
     if (!product) throw new NotFoundException('Product not found in this store.');
     const quantity = dto.quantity ?? 1;
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > product.quantity) throw new BadRequestException('The requested quantity is not available.');
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      throw new BadRequestException('Choose at least one item before sending this product in chat.');
+    }
+    if (product.quantity <= 0) {
+      throw new BadRequestException('This product is out of stock right now.');
+    }
+    if (quantity > product.quantity) {
+      throw new BadRequestException(
+        `Only ${product.quantity} item${product.quantity === 1 ? '' : 's'} available right now.`,
+      );
+    }
     const selectedVariants = dto.selectedVariants ?? {};
     const variants = Array.isArray(product.variants) ? product.variants : [];
     for (const [key, value] of Object.entries(selectedVariants)) {
       if (!key || key.length > 80 || typeof value !== 'string' || !value || value.length > 80) throw new BadRequestException('Invalid product variant.');
       const match = variants.find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && entry.type === value);
-      if (!match || typeof match !== 'object' || Array.isArray(match) || typeof match.quantity !== 'number' || match.quantity < quantity) throw new BadRequestException('The selected product variant is not available.');
+      if (!match || typeof match !== 'object' || Array.isArray(match) || typeof match.quantity !== 'number') {
+        throw new BadRequestException('The selected product variant is not available.');
+      }
+      if (match.quantity <= 0) {
+        throw new BadRequestException('That variant is out of stock right now.');
+      }
+      if (match.quantity < quantity) {
+        throw new BadRequestException(
+          `Only ${match.quantity} item${match.quantity === 1 ? '' : 's'} available for this variant.`,
+        );
+      }
     }
     const now = new Date();
     const unitPrice = product.promoPrice && product.promoStartsAt && product.promoEndsAt && product.promoStartsAt <= now && product.promoEndsAt > now ? product.promoPrice : product.unitPrice;
@@ -130,6 +200,13 @@ export class MessagingService {
       await tx.conversation.update({ where: { id: conversationId }, data: { updatedAt: created.createdAt } });
       return created;
     });
+    this.setTypingState(userId, conversationId, false);
     return this.mapMessage(message, userId);
+  }
+
+  async typing(userId: string, conversationId: string, typing: boolean) {
+    await this.requireParticipant(userId, conversationId);
+    this.setTypingState(userId, conversationId, typing);
+    return { conversationId, typing };
   }
 }
