@@ -5,11 +5,73 @@ import { lockOrder, syncOrder } from './fulfillment';
 const deliveryCapability = { available: false, reason: 'Courier booking and live tracking are not configured. Arrange delivery directly with the customer.' };
 const supportCapability = { available: true, liveChat: false };
 
+type SellerOrderDb = Pick<PrismaService, 'commerceOrder' | 'sellerFulfillment'>;
+
+function mapOrderStatusToFulfillmentStatus(status: string) {
+  switch (status) {
+    case 'confirmed':
+    case 'pending':
+      return 'pending';
+    case 'processing':
+      return 'processing';
+    case 'ready':
+      return 'ready';
+    case 'picked-up':
+    case 'in-transit':
+    case 'out-for-delivery':
+      return 'out_for_delivery';
+    case 'delivered':
+      return 'delivered';
+    case 'rejected':
+    case 'cancelled':
+      return 'rejected';
+    default:
+      return 'pending';
+  }
+}
+
 @Injectable()
 export class SellerOrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
   capabilities() { return { delivery: deliveryCapability, support: supportCapability }; }
+
+  private async ensureFulfillment(userId: string, order: {
+    id: string;
+    status: string;
+    userId: string;
+  }, tx: SellerOrderDb = this.prisma) {
+    const existing = await tx.sellerFulfillment.findUnique({
+      where: { orderId_vendorId: { orderId: order.id, vendorId: userId } },
+      include: { history: { orderBy: { createdAt: 'asc' } } },
+    });
+    if (existing) return existing;
+
+    const status = mapOrderStatusToFulfillmentStatus(order.status);
+    const created = await tx.sellerFulfillment.create({
+      data: {
+        orderId: order.id,
+        vendorId: userId,
+        status,
+        history: {
+          create: {
+            actorUserId: order.userId,
+            status,
+          },
+        },
+      },
+      include: { history: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    if (status === 'delivered') {
+      await tx.commerceOrder.update({
+        where: { id: order.id },
+        data: { completedAt: new Date() },
+      });
+    }
+
+    return created;
+  }
 
   async list(userId: string) {
     const rows = await this.prisma.commerceOrder.findMany({
@@ -28,8 +90,7 @@ export class SellerOrdersService {
       },
     });
     if (!order) throw new NotFoundException('Order not found.');
-    const fulfillment = order.fulfillments[0];
-    if (!fulfillment) throw new ConflictException('Order fulfillment requires the database upgrade.');
+    const fulfillment = order.fulfillments[0] ?? await this.ensureFulfillment(userId, { id: order.id, status: order.status, userId: order.userId }, this.prisma);
     const issues = await this.prisma.orderIssue.findMany({ where: { orderId: id, itemId: { in: order.items.map((item) => item.id) } }, orderBy: { createdAt: 'desc' } });
     const subtotal = order.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
     return {
@@ -48,8 +109,7 @@ export class SellerOrdersService {
       await lockOrder(tx, id);
       const order = await tx.commerceOrder.findFirst({ where: { id, items: { some: { vendorId: userId } } }, include: { items: { where: { vendorId: userId } } } });
       if (!order) throw new NotFoundException('Order not found.');
-      const current = await tx.sellerFulfillment.findUnique({ where: { orderId_vendorId: { orderId: id, vendorId: userId } } });
-      if (!current) throw new ConflictException('Order fulfillment requires the database upgrade.');
+      const current = await this.ensureFulfillment(userId, { id: order.id, status: order.status, userId: order.userId }, tx);
       if (current.status === status) {
         if (status === 'rejected' && current.rejectionReason !== reason?.trim()) throw new ConflictException('This order was already rejected with another reason.');
         return;
