@@ -1,112 +1,212 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-
 import { PrismaService } from 'prisma/prisma.service';
-import { SendMessageDto } from './dto/send-message.dto';
+import type { Prisma } from '../../generated/prisma/client';
+import { MessageKind, SendMessageDto } from './dto/send-message.dto';
+import { ProductContextDto } from './dto/product-context.dto';
+
+const conversationInclude = {
+  messages: { orderBy: { createdAt: 'desc' as const }, take: 1 },
+  vendorProfile: { select: { userId: true, logoUrl: true, storeName: true, reviewStatus: true } },
+  buyer: { select: { firstName: true, lastName: true, avatarUrl: true } },
+};
+type Conversation = Prisma.ConversationGetPayload<{ include: typeof conversationInclude }>;
 
 @Injectable()
 export class MessagingService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly typingWindowMs = 8_000;
+  private readonly typingByConversation = new Map<string, Map<string, number>>();
 
+  constructor(private readonly prisma: PrismaService) {}
   private label(value: Date) {
-    return new Intl.DateTimeFormat('en-NG', {
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(value);
+    return new Intl.DateTimeFormat('en-NG', { hour: 'numeric', minute: '2-digit' }).format(value);
+  }
+  private participant(userId: string, id?: string) {
+    return { ...(id ? { id } : {}), OR: [{ buyerUserId: userId }, { vendorProfile: { userId } }] };
+  }
+  private async requireParticipant(userId: string, id: string) {
+    const conversation = await this.prisma.conversation.findFirst({ where: this.participant(userId, id) });
+    if (!conversation) throw new NotFoundException('Conversation not found.');
+    return conversation;
   }
 
-  private mapMessage(
-    message: {
-      conversationId: string;
-      createdAt: Date;
-      id: string;
-      imageUri: string | null;
-      kind: 'TEXT' | 'IMAGE' | 'VOICE';
-      senderUserId: string;
-      text: string | null;
-    },
-    userId: string,
-  ) {
+  private pruneTyping(conversationId?: string) {
+    const now = Date.now();
+    const pruneOne = (id: string, users: Map<string, number>) => {
+      for (const [userId, expiresAt] of users.entries()) {
+        if (expiresAt <= now) users.delete(userId);
+      }
+      if (!users.size) this.typingByConversation.delete(id);
+    };
+
+    if (conversationId) {
+      const users = this.typingByConversation.get(conversationId);
+      if (users) pruneOne(conversationId, users);
+      return;
+    }
+
+    for (const [id, users] of this.typingByConversation.entries()) {
+      pruneOne(id, users);
+    }
+  }
+
+  private setTypingState(userId: string, conversationId: string, typing: boolean) {
+    this.pruneTyping(conversationId);
+    if (!typing) {
+      const users = this.typingByConversation.get(conversationId);
+      if (!users) return;
+      users.delete(userId);
+      if (!users.size) this.typingByConversation.delete(conversationId);
+      return;
+    }
+
+    const users = this.typingByConversation.get(conversationId) ?? new Map<string, number>();
+    users.set(userId, Date.now() + this.typingWindowMs);
+    this.typingByConversation.set(conversationId, users);
+  }
+
+  private isOtherParticipantTyping(userId: string, conversationId: string) {
+    this.pruneTyping(conversationId);
+    const users = this.typingByConversation.get(conversationId);
+    if (!users?.size) return false;
+    for (const participantId of users.keys()) {
+      if (participantId !== userId) return true;
+    }
+    return false;
+  }
+  private mapMessage(message: Prisma.ChatMessageGetPayload<object>, userId: string) {
     return {
       conversationId: message.conversationId,
       direction: message.senderUserId === userId ? 'outgoing' : 'incoming',
-      id: message.id,
-      imageUri: message.imageUri ?? undefined,
-      kind: message.kind.toLowerCase(),
-      sentAt: message.createdAt.toISOString(),
-      text: message.text ?? undefined,
-      timestampLabel: this.label(message.createdAt),
+      id: message.id, imageUri: message.imageUri ?? undefined,
+      kind: message.kind.toLowerCase(), sentAt: message.createdAt.toISOString(),
+      text: message.text ?? undefined, timestampLabel: this.label(message.createdAt),
+      productContext: message.productContext ?? undefined,
     };
   }
-
-  async list(userId: string) {
+  private mapConversation(conversation: Conversation, userId: string, unreadCount = 0) {
+    const seller = conversation.vendorProfile.userId === userId;
+    const latest = conversation.messages[0];
+    const otherRead = seller ? conversation.buyerLastReadAt : conversation.sellerLastReadAt;
+    return {
+      avatarUri: (seller ? conversation.buyer.avatarUrl : conversation.vendorProfile.logoUrl) ?? undefined,
+      favorite: conversation.favorite, id: conversation.id,
+      name: seller ? [conversation.buyer.firstName, conversation.buyer.lastName].filter(Boolean).join(' ') || 'Buyer' : conversation.vendorProfile.storeName,
+      preview: latest?.text ?? (latest?.kind === 'IMAGE' ? 'Photo' : latest?.kind === 'VOICE' ? 'Voice message' : 'Start a conversation'),
+      previewRead: !!(latest && latest.senderUserId === userId && otherRead && otherRead >= latest.createdAt),
+      timestampLabel: this.label(latest?.createdAt ?? conversation.updatedAt),
+      typing: this.isOtherParticipantTyping(userId, conversation.id),
+      unreadCount, vendorId: conversation.vendorProfile.userId, buyerId: conversation.buyerUserId,
+      updatedAt: conversation.updatedAt.toISOString(),
+      verified: !seller && conversation.vendorProfile.reviewStatus === 'APPROVED',
+    };
+  }
+  async list(userId: string, sellerOnly = false) {
+    this.pruneTyping();
     const conversations = await this.prisma.conversation.findMany({
-      where: { buyerUserId: userId },
-      include: {
-        messages: { orderBy: { createdAt: 'desc' }, take: 1 },
-        vendorProfile: true,
-      },
-      orderBy: { updatedAt: 'desc' },
+      where: sellerOnly ? { vendorProfile: { userId } } : this.participant(userId),
+      include: conversationInclude, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     });
     return {
-      conversations: conversations.map((conversation) => {
-        const latest = conversation.messages[0];
-        return {
-          avatarKind: 'oden',
-          favorite: conversation.favorite,
-          id: conversation.id,
-          name: conversation.vendorProfile.storeName,
-          preview:
-            latest?.text ??
-            (latest?.kind === 'IMAGE'
-              ? 'Photo'
-              : latest?.kind === 'VOICE'
-                ? 'Voice message'
-                : 'Start a conversation'),
-          previewRead: latest?.senderUserId === userId,
-          timestampLabel: this.label(latest?.createdAt ?? conversation.updatedAt),
-          unreadCount: 0,
-          vendorId: conversation.vendorProfile.userId,
-          verified: conversation.vendorProfile.reviewStatus === 'APPROVED',
-        };
-      }),
-      messagesByConversation: {},
+      conversations: await Promise.all(conversations.map(async (conversation) => {
+        const lastRead = conversation.buyerUserId === userId ? conversation.buyerLastReadAt : conversation.sellerLastReadAt;
+        const unread = await this.prisma.chatMessage.count({ where: {
+          conversationId: conversation.id, senderUserId: { not: userId },
+          ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
+        } });
+        return this.mapConversation(conversation, userId, unread);
+      })), messagesByConversation: {},
     };
   }
-
+  async productContext(vendorProfileId: string, dto: ProductContextDto) {
+    if (!dto.productId) {
+      if (dto.quantity !== undefined || dto.selectedVariants !== undefined) throw new BadRequestException('Select a product for this context.');
+      return undefined;
+    }
+    const product = await this.prisma.product.findFirst({ where: { id: dto.productId, vendorProfileId, status: 'ACTIVE' } });
+    if (!product) throw new NotFoundException('Product not found in this store.');
+    const quantity = dto.quantity ?? 1;
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      throw new BadRequestException('Choose at least one item before sending this product in chat.');
+    }
+    if (product.quantity <= 0) {
+      throw new BadRequestException('This product is out of stock right now.');
+    }
+    if (quantity > product.quantity) {
+      throw new BadRequestException(
+        `Only ${product.quantity} item${product.quantity === 1 ? '' : 's'} available right now.`,
+      );
+    }
+    const selectedVariants = dto.selectedVariants ?? {};
+    const variants = Array.isArray(product.variants) ? product.variants : [];
+    for (const [key, value] of Object.entries(selectedVariants)) {
+      if (!key || key.length > 80 || typeof value !== 'string' || !value || value.length > 80) throw new BadRequestException('Invalid product variant.');
+      const match = variants.find((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && entry.type === value);
+      if (!match || typeof match !== 'object' || Array.isArray(match) || typeof match.quantity !== 'number') {
+        throw new BadRequestException('The selected product variant is not available.');
+      }
+      if (match.quantity <= 0) {
+        throw new BadRequestException('That variant is out of stock right now.');
+      }
+      if (match.quantity < quantity) {
+        throw new BadRequestException(
+          `Only ${match.quantity} item${match.quantity === 1 ? '' : 's'} available for this variant.`,
+        );
+      }
+    }
+    const now = new Date();
+    const unitPrice = product.promoPrice && product.promoStartsAt && product.promoEndsAt && product.promoStartsAt <= now && product.promoEndsAt > now ? product.promoPrice : product.unitPrice;
+    return { productId: product.id, name: product.name, imageUri: product.imageUrls[0] ?? '', unitPrice, quantity, selectedVariants };
+  }
+  async start(userId: string, vendorId: string, dto: ProductContextDto = {}) {
+    const vendor = await this.prisma.vendorProfile.findFirst({ where: { setupCompleted: true, userId: vendorId }, select: { id: true } });
+    if (!vendor) throw new NotFoundException('Seller not found.');
+    if (vendorId === userId) throw new BadRequestException('You cannot message your own store.');
+    const context = await this.productContext(vendor.id, dto);
+    const args = {
+      where: { buyerUserId_vendorProfileId: { buyerUserId: userId, vendorProfileId: vendor.id } },
+      create: { buyerUserId: userId, vendorProfileId: vendor.id }, update: {}, include: conversationInclude,
+    };
+    const conversation = context ? await this.prisma.$transaction(async (tx) => {
+      const record = await tx.conversation.upsert(args);
+      await tx.chatMessage.create({ data: { conversationId: record.id, senderUserId: userId, kind: 'TEXT', text: `I'm interested in ${context.name}.`, productContext: context } });
+      return tx.conversation.update({ where: { id: record.id }, data: { updatedAt: new Date() }, include: conversationInclude });
+    }) : await this.prisma.conversation.upsert(args);
+    return this.mapConversation(conversation, userId);
+  }
   async messages(userId: string, conversationId: string) {
-    const conversation = await this.prisma.conversation.findFirst({
-      where: { id: conversationId, buyerUserId: userId },
-      select: { id: true },
-    });
-    if (!conversation) throw new NotFoundException('Conversation not found.');
-    const messages = await this.prisma.chatMessage.findMany({
-      where: { conversationId },
-      orderBy: { createdAt: 'asc' },
-    });
+    await this.requireParticipant(userId, conversationId);
+    const messages = await this.prisma.chatMessage.findMany({ where: { conversationId }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
     return messages.map((message) => this.mapMessage(message, userId));
   }
-
+  async read(userId: string, id: string) {
+    const conversation = await this.requireParticipant(userId, id);
+    await this.prisma.conversation.update({ where: { id }, data: {
+      ...(conversation.buyerUserId === userId ? { buyerLastReadAt: new Date() } : { sellerLastReadAt: new Date() }),
+      updatedAt: conversation.updatedAt,
+    } });
+    return { id };
+  }
   async send(userId: string, conversationId: string, dto: SendMessageDto) {
-    const conversation = await this.prisma.conversation.findFirst({
-      where: { id: conversationId, buyerUserId: userId },
-      select: { id: true },
+    const conversation = await this.requireParticipant(userId, conversationId);
+    const productContext = await this.productContext(conversation.vendorProfileId, dto);
+    if (dto.kind === MessageKind.TEXT && !dto.text?.trim() && !productContext) throw new BadRequestException('Enter a message.');
+    if (dto.kind !== MessageKind.TEXT && !dto.imageUri) throw new BadRequestException('Attach the message file.');
+    if (dto.imageUri && !/^https:\/\//.test(dto.imageUri) && !/^\/uploads\/[a-zA-Z0-9/_-]+\.[a-zA-Z0-9]+$/.test(dto.imageUri)) throw new BadRequestException('Upload the attachment before sending it.');
+    const message = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.chatMessage.create({ data: {
+        conversationId, imageUri: dto.imageUri, kind: dto.kind.toUpperCase() as 'TEXT' | 'IMAGE' | 'VOICE',
+        senderUserId: userId, text: dto.text?.trim() || (productContext ? `I'm interested in ${productContext.name}.` : undefined), productContext,
+      } });
+      await tx.conversation.update({ where: { id: conversationId }, data: { updatedAt: created.createdAt } });
+      return created;
     });
-    if (!conversation) throw new NotFoundException('Conversation not found.');
-    if (dto.kind === 'text' && !dto.text?.trim()) {
-      throw new BadRequestException('Enter a message.');
-    }
-    if (dto.kind !== 'text' && !dto.imageUri) {
-      throw new BadRequestException('Attach the message file.');
-    }
-    const message = await this.prisma.chatMessage.create({
-      data: {
-        conversationId,
-        imageUri: dto.imageUri,
-        kind: dto.kind.toUpperCase() as 'TEXT' | 'IMAGE' | 'VOICE',
-        senderUserId: userId,
-        text: dto.text?.trim(),
-      },
-    });
+    this.setTypingState(userId, conversationId, false);
     return this.mapMessage(message, userId);
+  }
+
+  async typing(userId: string, conversationId: string, typing: boolean) {
+    await this.requireParticipant(userId, conversationId);
+    this.setTypingState(userId, conversationId, typing);
+    return { conversationId, typing };
   }
 }

@@ -1,18 +1,36 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SendMessageDto } from './dto/send-message.dto';
+import { StartConversationDto } from './dto/start-conversation.dto';
+import { ConversationTypingDto } from './dto/conversation-typing.dto';
 import { MessagingService } from './messaging.service';
 
-@Controller('buyer/conversations')
+@Controller(['buyer/conversations', 'seller/conversations'])
 @UseGuards(JwtAuthGuard)
 export class MessagingController {
   constructor(private readonly messaging: MessagingService) {}
 
   @Get()
   list(@Req() request: AuthenticatedRequest) {
-    return this.messaging.list(request.user.sub);
+    return this.messaging.list(request.user.sub, request.path.startsWith('/seller/'));
+  }
+
+  @Post()
+  start(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: StartConversationDto,
+  ) {
+    return this.messaging.start(request.user.sub, dto.vendorId, dto);
   }
 
   @Get(':conversationId/messages')
@@ -30,5 +48,19 @@ export class MessagingController {
     @Body() dto: SendMessageDto,
   ) {
     return this.messaging.send(request.user.sub, conversationId, dto);
+  }
+
+  @Post(':conversationId/read')
+  read(@Req() request: AuthenticatedRequest, @Param('conversationId') id: string) {
+    return this.messaging.read(request.user.sub, id);
+  }
+
+  @Post(':conversationId/typing')
+  typing(
+    @Req() request: AuthenticatedRequest,
+    @Param('conversationId') conversationId: string,
+    @Body() dto: ConversationTypingDto,
+  ) {
+    return this.messaging.typing(request.user.sub, conversationId, dto.typing);
   }
 }

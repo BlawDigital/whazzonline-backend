@@ -12,6 +12,7 @@ import { VendorsService } from './vendors.service';
 
 describe('VendorsService', () => {
   const prisma = {
+    commerceOrderItem: { findMany: jest.fn() },
     product: {
       create: jest.fn(),
       delete: jest.fn(),
@@ -26,6 +27,8 @@ describe('VendorsService', () => {
       upsert: jest.fn(),
     },
     user: { findUnique: jest.fn() },
+    wallet: { findUnique: jest.fn(), upsert: jest.fn() },
+    walletTransaction: { create: jest.fn() },
     vendorProfile: {
       findUnique: jest.fn(),
       update: jest.fn(),
@@ -51,6 +54,62 @@ describe('VendorsService', () => {
         subCategory: 'Clothing',
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('calculates vendor finance from delivered order items and payouts', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      firstName: 'Ada',
+      lastName: 'Vendor',
+      role: 'VENDOR',
+    });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      bankAccountName: 'Ada Vendor',
+      bankAccountNumber: '0123456789',
+      bankCode: '011',
+      bankName: 'First Bank',
+      storeName: 'Ada Store',
+    });
+    prisma.commerceOrderItem.findMany.mockResolvedValue([
+      {
+        createdAt: new Date('2026-09-14T10:00:00.000Z'),
+        id: 'item-id',
+        orderId: 'order-123456',
+        quantity: 2,
+        unitPrice: 5000,
+      },
+    ]);
+    prisma.wallet.upsert.mockResolvedValue({
+      transactions: [
+        {
+          amount: -1000,
+          createdAt: new Date(),
+          id: 'payout-id',
+          status: 'COMPLETED',
+        },
+      ],
+    });
+
+    await expect(service.finance('vendor-id')).resolves.toMatchObject({
+      availableBalance: 8000,
+      completedPayouts: 1000,
+      grossSales: 10000,
+      minimumWithdrawalAmount: 100,
+      netEarnings: 9000,
+      platformFees: 1000,
+      totalSales: 10000,
+    });
+  });
+
+  it('rejects a withdrawal larger than the available seller balance', async () => {
+    jest.spyOn(service, 'finance').mockResolvedValueOnce({
+      availableBalance: 500,
+      bankAccount: { accountNumber: '0123456789', bankName: 'First Bank' },
+    } as never);
+
+    await expect(service.requestWithdrawal('vendor-id', 600)).rejects.toThrow(
+      'Withdrawal exceeds available balance.',
+    );
+    expect(prisma.walletTransaction.create).not.toHaveBeenCalled();
   });
 
   it('upserts a profile for a vendor account', async () => {

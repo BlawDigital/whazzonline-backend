@@ -21,6 +21,7 @@ import { SubmitVendorProfileDto } from './dto/submit-vendor-profile.dto';
 import { UpdateStorefrontContentDto } from './dto/update-storefront-content.dto';
 import { UpdateVendorProductDto } from './dto/update-vendor-product.dto';
 import { removeVendorUploadUrl } from './vendor-upload.config';
+import { vendorFinanceConfig } from './vendor-finance.config';
 
 const SIZE_VARIANTS = new Set(['xs', 's', 'm', 'l', 'xl', 'xxl']);
 
@@ -44,6 +45,176 @@ export class VendorsService {
       );
     }
     return user;
+  }
+
+  private async financeData(userId: string) {
+    const user = await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: {
+        bankAccountName: true,
+        bankAccountNumber: true,
+        bankCode: true,
+        bankName: true,
+        storeName: true,
+      },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    const [orderItems, wallet] = await Promise.all([
+      this.prisma.commerceOrderItem.findMany({
+        where: { vendorId: userId, order: { status: 'delivered' } },
+        select: {
+          createdAt: true,
+          id: true,
+          orderId: true,
+          quantity: true,
+          unitPrice: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.wallet.upsert({
+        where: { userId },
+        create: {
+          accountName:
+            [user.firstName, user.lastName].filter(Boolean).join(' ') ||
+            profile.storeName,
+          accountNumber: `019${userId.replace(/-/g, '').slice(0, 7)}`,
+          bankName: 'Paystack - Titan',
+          userId,
+        },
+        update: {},
+        include: {
+          transactions: {
+            where: { type: 'WITHDRAWAL' },
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      }),
+    ]);
+
+    return { orderItems, profile, wallet };
+  }
+
+  async finance(userId: string) {
+    const { orderItems, profile, wallet } = await this.financeData(userId);
+    const sales = orderItems.map((item) => ({
+      amount: item.unitPrice * item.quantity,
+      createdAt: item.createdAt,
+      id: item.id,
+      orderId: item.orderId,
+    }));
+    const grossSales = sales.reduce((sum, sale) => sum + sale.amount, 0);
+    const platformFees = Math.round(
+      grossSales * (vendorFinanceConfig.platformFeePercent / 100),
+    );
+    const netEarnings = grossSales - platformFees;
+    const completedPayouts = wallet.transactions
+      .filter((item) => item.status === 'COMPLETED')
+      .reduce((sum, item) => sum + Math.abs(item.amount), 0);
+    const pendingPayouts = wallet.transactions
+      .filter((item) => item.status === 'PENDING')
+      .reduce((sum, item) => sum + Math.abs(item.amount), 0);
+    const availableBalance = Math.max(
+      netEarnings - completedPayouts - pendingPayouts,
+      0,
+    );
+    const fees = sales.map((sale) => ({
+      amount: -Math.round(
+        sale.amount * (vendorFinanceConfig.platformFeePercent / 100),
+      ),
+      createdAt: sale.createdAt.toISOString(),
+      description: 'Platform Service Fee',
+      id: `fee-${sale.id}`,
+      orderId: sale.orderId,
+      type: 'FEE' as const,
+    }));
+    const saleTransactions = sales.map((sale) => ({
+      amount: sale.amount,
+      createdAt: sale.createdAt.toISOString(),
+      description: `Order #${sale.orderId.slice(-6).toUpperCase()}`,
+      id: `sale-${sale.id}`,
+      orderId: sale.orderId,
+      type: 'SALE' as const,
+    }));
+    const payouts = wallet.transactions.map((item) => ({
+      amount: Math.abs(item.amount),
+      createdAt: item.createdAt.toISOString(),
+      description: 'Withdrawal to Bank',
+      id: item.id,
+      status: item.status,
+    }));
+    const payoutTransactions = payouts.map((item) => ({
+      ...item,
+      amount: -item.amount,
+      type: 'PAYOUT' as const,
+    }));
+    const transactions = [
+      ...saleTransactions,
+      ...fees,
+      ...payoutTransactions,
+    ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const now = new Date();
+    const monthlyGrowth = Array.from({ length: 9 }, (_, index) => {
+      const date = new Date(now.getFullYear(), now.getMonth() - 8 + index, 1);
+      const amount = sales
+        .filter(
+          (sale) =>
+            sale.createdAt.getFullYear() === date.getFullYear() &&
+            sale.createdAt.getMonth() === date.getMonth(),
+        )
+        .reduce((sum, sale) => sum + sale.amount, 0);
+      return {
+        amount,
+        label: date.toLocaleString('en', { month: 'short' }),
+      };
+    });
+
+    return {
+      availableBalance,
+      bankAccount: {
+        accountName: profile.bankAccountName,
+        accountNumber: profile.bankAccountNumber,
+        bankCode: profile.bankCode,
+        bankName: profile.bankName,
+      },
+      completedPayouts,
+      grossSales,
+      monthlyGrowth,
+      minimumWithdrawalAmount: vendorFinanceConfig.minimumWithdrawalAmount,
+      netEarnings,
+      pendingPayouts,
+      platformFeePercent: vendorFinanceConfig.platformFeePercent,
+      platformFees,
+      payouts,
+      recentEarnings: saleTransactions.slice(0, 5),
+      storeName: profile.storeName,
+      totalSales: grossSales,
+      transactions,
+    };
+  }
+
+  async requestWithdrawal(userId: string, amount: number) {
+    const data = await this.finance(userId);
+    if (!data.bankAccount.accountNumber || !data.bankAccount.bankName) {
+      throw new BadRequestException(
+        'Add and verify a bank account before withdrawing funds.',
+      );
+    }
+    if (amount > data.availableBalance) {
+      throw new BadRequestException('Withdrawal exceeds available balance.');
+    }
+    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
+    if (!wallet) throw new NotFoundException('Vendor wallet not found.');
+    return this.prisma.walletTransaction.create({
+      data: {
+        amount: -amount,
+        description: 'Withdrawal to Bank',
+        status: 'PENDING',
+        type: 'WITHDRAWAL',
+        walletId: wallet.id,
+      },
+    });
   }
 
   async findProfile(userId: string) {
