@@ -1,10 +1,10 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { EmailOtpPurpose } from 'generated/prisma/enums';
 import { JwtService } from '@nestjs/jwt';
 
 import { OtpService } from './otp/otp.service';
@@ -329,6 +329,7 @@ export class AuthService {
         role,
         authProvider: normalizedPhone ? 'PHONE' : 'EMAIL',
         isVerified: true,
+        emailVerified: Boolean(normalizedEmail),
       },
     });
 
@@ -415,10 +416,7 @@ export class AuthService {
     return this.toPublicUser(user);
   }
 
-  async updateProfile(
-    userId: string,
-    updateProfileDto: UpdateProfileDto,
-  ) {
+  async updateProfile( userId: string,updateProfileDto: UpdateProfileDto,) {
     const user = await this.prisma.user.findUnique({
       where: {
         id: userId,
@@ -426,9 +424,7 @@ export class AuthService {
     });
 
     if (!user) {
-      throw new NotFoundException(
-        "User not found.",
-      );
+      throw new NotFoundException("User not found.",);
     }
 
     const {
@@ -437,7 +433,29 @@ export class AuthService {
       dateOfBirth,
       state,
       city,
+      interests,
     } = updateProfileDto;
+
+    let interestIds: string[] | undefined;
+    if(interests !== undefined){
+
+      const uniqueSlugs = [...new Set(interests.map((slug) => slug.trim().toLowerCase()).filter(Boolean),)];
+      const interestRecords = await this.prisma.interest.findMany({
+        where:{
+          slug:{
+            in: uniqueSlugs,
+          },
+        },
+        select:{
+          id: true,
+          slug: true,
+        },
+      });
+      if(interestRecords.length !== uniqueSlugs.length){
+        throw new BadRequestException("One or more selected interests are invalid.",);
+      }
+      interestIds= interestRecords.map((interest)=> interest.id);
+    }
 
     const updatedUser = await this.prisma.user.update({
       where: {
@@ -464,6 +482,16 @@ export class AuthService {
         ...(city !== undefined && {
           city: city.trim(),
         }),
+        ...(interestIds !== undefined &&{
+          interests:{
+            set: interestIds.map((id) => ({
+              id,
+            })),
+          },
+        }),
+      },
+      include:{
+        interests: true,
       },
     });
 
@@ -474,12 +502,7 @@ export class AuthService {
   }
 
 
-  private toPublicUser<
-    T extends {
-      passwordHash: unknown;
-      vendorProfile?: { setupCompleted: boolean } | null;
-    },
-  >(user: T) {
+  private toPublicUser<T extends {  passwordHash: unknown;  vendorProfile?: { setupCompleted: boolean } | null;},>(user: T) {
     const { passwordHash: _passwordHash, vendorProfile, ...publicUser } = user;
     return {
       ...publicUser,

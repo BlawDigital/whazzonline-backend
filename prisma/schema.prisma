@@ -85,10 +85,21 @@ model User {
   buyerConversations Conversation[]      @relation("ConversationBuyer")
   sentMessages       ChatMessage[]       @relation("MessageSender")
 
+  //User shopping intrests
+  interests Interest[]
+
   @@index([email])
   @@index([phone])
   @@index([registrationType])
   @@index([role])
+}
+
+model Interest {
+  id   String @id @default(cuid())
+  name String @unique
+  slug String @unique
+
+  user User[]
 }
 
 enum WalletTransactionType {
