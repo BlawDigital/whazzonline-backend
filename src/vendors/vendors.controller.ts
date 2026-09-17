@@ -20,6 +20,7 @@ import {
 } from '@nestjs/platform-express';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { CreateVendorWithdrawalDto } from './dto/create-vendor-withdrawal.dto';
 import { CreateVendorCategoryDto } from './dto/create-vendor-category.dto';
 import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
@@ -70,6 +71,27 @@ export class VendorsController {
   @Get(':userId/trust-reviews')
   findTrustReviews(@Param('userId') userId: string) {
     return this.vendorsService.findTrustReviews(userId);
+  }
+
+  @Get(':userId/finance')
+  @UseGuards(JwtAuthGuard)
+  finance(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
+    this.requireOwner(request, userId);
+    return this.vendorsService.finance(userId);
+  }
+
+  @Post(':userId/finance/withdrawals')
+  @UseGuards(JwtAuthGuard)
+  withdraw(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Body() dto: CreateVendorWithdrawalDto,
+  ) {
+    this.requireOwner(request, userId);
+    return this.vendorsService.requestWithdrawal(userId, dto.amount);
   }
 
   @Post(':userId/products')
@@ -261,5 +283,11 @@ export class VendorsController {
     @Body() dto: SubmitVendorProfileDto,
   ) {
     return this.vendorsService.submitProfile(userId, dto);
+  }
+
+  private requireOwner(request: AuthenticatedRequest, userId: string) {
+    if (request.user.sub !== userId) {
+      throw new ForbiddenException('You can only view your own finances.');
+    }
   }
 }

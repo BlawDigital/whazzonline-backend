@@ -1,4 +1,5 @@
 import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ProductContextDto } from './product-context.dto';
 
 export enum MessageKind {
   IMAGE = 'image',
@@ -6,7 +7,7 @@ export enum MessageKind {
   VOICE = 'voice',
 }
 
-export class SendMessageDto {
+export class SendMessageDto extends ProductContextDto {
   @IsEnum(MessageKind)
   kind!: MessageKind;
 
