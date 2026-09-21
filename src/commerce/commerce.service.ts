@@ -317,6 +317,20 @@ export class CommerceService {
           },
         },
       });
+      for (const vendorId of [
+        ...new Set(orderItems.map((item) => item.vendorId)),
+      ]) {
+        await transaction.sellerFulfillment.create({
+          data: {
+            orderId: created.id,
+            vendorId,
+            status: 'pending',
+            history: {
+              create: { actorUserId: userId, status: 'pending' },
+            },
+          },
+        });
+      }
       await transaction.commerceCartItem.deleteMany({
         where: {
           id: { in: selectedItems.map(({ cartItem }) => cartItem.id) },
