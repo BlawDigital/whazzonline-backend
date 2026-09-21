@@ -10,6 +10,7 @@ import { ReferralsModule } from './referrals/referrals.module';
 import { CommerceModule } from './commerce/commerce.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { IneterestsModule } from './interests/interests.module';
+import { SupportModule } from './support/support.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { IneterestsModule } from './interests/interests.module';
     CommerceModule,
     MessagingModule,
     IneterestsModule,
+    SupportModule,
   ],
 })
 export class AppModule {}
