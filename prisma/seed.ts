@@ -2,7 +2,7 @@
 
 // import { PrismaPg } from '@prisma/adapter-pg';
 // import { PrismaClient } from '../generated/prisma/client';
-// import bcrypt from "bcrypt"; 
+// import bcrypt from "bcrypt";
 
 // const databaseUrl = process.env.DATABASE_URL;
 // if (!databaseUrl) throw new Error('DATABASE_URL is not configured');
@@ -10,7 +10,6 @@
 // const prisma = new PrismaClient({
 //   adapter: new PrismaPg({ connectionString: databaseUrl }),
 // });
-
 
 // const TEST_PASSWORD = "WhazzTest@123";
 
@@ -547,17 +546,16 @@
 //   })
 //   .finally(() => prisma.$disconnect());
 
+import 'dotenv/config';
 
-import "dotenv/config";
-
-import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, User } from "../generated/prisma/client";
-import bcrypt from "bcrypt";
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient, User } from '../generated/prisma/client';
+import bcrypt from 'bcrypt';
 
 const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL is not configured");
+  throw new Error('DATABASE_URL is not configured');
 }
 
 const prisma = new PrismaClient({
@@ -572,58 +570,58 @@ const prisma = new PrismaClient({
  * ============================================================
  */
 
-const TEST_PASSWORD = "WhazzTest@123";
+const TEST_PASSWORD = 'WhazzTest@123';
 
 const testUsers = [
   {
-    email: "vendor1@whazzonline.com",
+    email: 'vendor1@whazzonline.com',
     password: TEST_PASSWORD,
-    firstName: "Oden",
-    lastName: "Fashion",
-    registrationType: "SELLER" as const,
-    role: "VENDOR" as const,
-    city: "Yaba",
-    state: "Lagos",
+    firstName: 'Oden',
+    lastName: 'Fashion',
+    registrationType: 'SELLER' as const,
+    role: 'VENDOR' as const,
+    city: 'Yaba',
+    state: 'Lagos',
   },
   {
-    email: "vendor2@whazzonline.com",
+    email: 'vendor2@whazzonline.com',
     password: TEST_PASSWORD,
-    firstName: "Ayil",
-    lastName: "Electronics",
-    registrationType: "SELLER" as const,
-    role: "VENDOR" as const,
-    city: "Ikeja",
-    state: "Lagos",
+    firstName: 'Ayil',
+    lastName: 'Electronics',
+    registrationType: 'SELLER' as const,
+    role: 'VENDOR' as const,
+    city: 'Ikeja',
+    state: 'Lagos',
   },
   {
-    email: "vendor3@whazzonline.com",
+    email: 'vendor3@whazzonline.com',
     password: TEST_PASSWORD,
-    firstName: "Glow",
-    lastName: "Beauty",
-    registrationType: "SELLER" as const,
-    role: "VENDOR" as const,
-    city: "Lekki",
-    state: "Lagos",
+    firstName: 'Glow',
+    lastName: 'Beauty',
+    registrationType: 'SELLER' as const,
+    role: 'VENDOR' as const,
+    city: 'Lekki',
+    state: 'Lagos',
   },
   {
-    email: "buyer1@whazzonline.com",
+    email: 'buyer1@whazzonline.com',
     password: TEST_PASSWORD,
-    firstName: "Katherine",
-    lastName: "Oluseye",
-    registrationType: "BUYER" as const,
-    role: "CUSTOMER" as const,
-    city: "Ikeja",
-    state: "Lagos",
+    firstName: 'Katherine',
+    lastName: 'Oluseye',
+    registrationType: 'BUYER' as const,
+    role: 'CUSTOMER' as const,
+    city: 'Ikeja',
+    state: 'Lagos',
   },
   {
-    email: "buyer2@whazzonline.com",
+    email: 'buyer2@whazzonline.com',
     password: TEST_PASSWORD,
-    firstName: "Daniel",
-    lastName: "Okafor",
-    registrationType: "BUYER" as const,
-    role: "CUSTOMER" as const,
-    city: "Yaba",
-    state: "Lagos",
+    firstName: 'Daniel',
+    lastName: 'Okafor',
+    registrationType: 'BUYER' as const,
+    role: 'CUSTOMER' as const,
+    city: 'Yaba',
+    state: 'Lagos',
   },
 ];
 
@@ -668,9 +666,7 @@ async function seedTestUsers() {
 
     users.push(user);
 
-    console.log(
-      `Seeded ${testUser.role}: ${testUser.email}`,
-    );
+    console.log(`Seeded ${testUser.role}: ${testUser.email}`);
   }
 
   return users;
@@ -684,40 +680,40 @@ async function seedTestUsers() {
 
 const interests = [
   {
-    name: "Fashion & Apparel",
-    slug: "fashion",
+    name: 'Fashion & Apparel',
+    slug: 'fashion',
   },
   {
-    name: "Electronics",
-    slug: "electronics",
+    name: 'Electronics',
+    slug: 'electronics',
   },
   {
-    name: "Services",
-    slug: "services",
+    name: 'Services',
+    slug: 'services',
   },
   {
-    name: "Food & Groceries",
-    slug: "food",
+    name: 'Food & Groceries',
+    slug: 'food',
   },
   {
-    name: "Home & Living",
-    slug: "home",
+    name: 'Home & Living',
+    slug: 'home',
   },
   {
-    name: "Beauty & Personal Care",
-    slug: "beauty",
+    name: 'Beauty & Personal Care',
+    slug: 'beauty',
   },
   {
-    name: "Health & Wellness",
-    slug: "health",
+    name: 'Health & Wellness',
+    slug: 'health',
   },
   {
-    name: "Agriculture & Farm Produce",
-    slug: "agriculture",
+    name: 'Agriculture & Farm Produce',
+    slug: 'agriculture',
   },
   {
-    name: "Children & Baby",
-    slug: "children",
+    name: 'Children & Baby',
+    slug: 'children',
   },
 ];
 
@@ -742,6 +738,193 @@ async function seedInterests() {
   console.log(`Seeded ${interests.length} interests.`);
 }
 
+const referralNames = [
+  'Rita Mma Store',
+  'Faith Supermarket',
+  'Joyous Store',
+  'Bokku Mini Mart',
+  'Richie Shopping',
+  'Family Store',
+  'Foods by Mo',
+  'Jiggy Mall',
+];
+
+async function seedReferralsForUsers(users: User[]) {
+  const now = Date.now();
+
+  for (const user of users) {
+    const existing = await prisma.referral.count({
+      where: { referrerUserId: user.id },
+    });
+    if (existing > 0) continue;
+
+    await prisma.referral.createMany({
+      data: referralNames.map((refereeName, index) => {
+        const completed = ![2, 7].includes(index);
+        const createdAt = new Date(now - index * 86_400_000);
+        return {
+          completedAt: completed ? createdAt : null,
+          createdAt,
+          refereeName,
+          referrerUserId: user.id,
+          rewardAmount: 3125,
+          status: completed ? ('COMPLETED' as const) : ('PENDING' as const),
+        };
+      }),
+    });
+  }
+
+  console.log(`Ensured referral history for ${users.length} users.`);
+}
+
+const seededOrderStates = [
+  'pending',
+  'accepted',
+  'rejected',
+  'ready_for_pickup',
+];
+
+async function seedOrdersForSellers(users: User[]) {
+  const buyers = users.filter((user) => user.role === 'CUSTOMER');
+  const sellers = users.filter(
+    (user) =>
+      user.role === 'VENDOR' ||
+      user.role === 'BUSINESS' ||
+      user.registrationType === 'SELLER',
+  );
+
+  if (buyers.length === 0) {
+    throw new Error('At least one customer is required to seed seller orders.');
+  }
+
+  for (const [sellerIndex, seller] of sellers.entries()) {
+    const profile = await prisma.vendorProfile.upsert({
+      where: { userId: seller.id },
+      create: {
+        address: '50 Alvan Building, Toyin Street, Ikeja',
+        category: 'Fashion',
+        city: seller.city ?? 'Ikeja',
+        description: 'Quality products from a verified Whazzonline vendor.',
+        lga: 'Ikeja',
+        reviewStatus: 'APPROVED',
+        setupCompleted: true,
+        state: seller.state ?? 'Lagos',
+        storeName:
+          [seller.firstName, seller.lastName].filter(Boolean).join(' ') ||
+          'Whazzonline Store',
+        subCategory: 'General',
+        userId: seller.id,
+      },
+      update: {},
+    });
+
+    let product = await prisma.product.findFirst({
+      orderBy: { createdAt: 'asc' },
+      where: { vendorProfileId: profile.id },
+    });
+    if (!product) {
+      product = await prisma.product.create({
+        data: {
+          category: profile.category,
+          description: `A featured product from ${profile.storeName}.`,
+          imageUrls: [
+            'https://images.unsplash.com/photo-1584917865442-de89df76afd3?auto=format&fit=crop&w=900&q=85',
+          ],
+          mainCategory: profile.category,
+          name: 'Givenchi Designer Bag',
+          quantity: 50,
+          status: 'ACTIVE',
+          unitPrice: 50000,
+          variants: [],
+          vendorProfileId: profile.id,
+        },
+      });
+    }
+
+    const buyer = buyers[sellerIndex % buyers.length];
+    for (const [stateIndex, status] of seededOrderStates.entries()) {
+      const legacyMarker = `Seeded seller order:${seller.id}:${status}`;
+      const seedSku = `SEED-${seller.id.slice(0, 8)}-${status.toUpperCase()}`;
+      const existing = await prisma.commerceOrder.findFirst({
+        select: { id: true },
+        where: {
+          OR: [
+            { deliveryAddress: legacyMarker },
+            { items: { some: { sku: seedSku } } },
+          ],
+          userId: buyer.id,
+        },
+      });
+      if (existing) {
+        await prisma.$transaction([
+          prisma.commerceOrder.update({
+            data: {
+              deliveryAddress: '50 Alvan Building, Toyin Street, Ikeja, Lagos',
+            },
+            where: { id: existing.id },
+          }),
+          prisma.commerceOrderItem.updateMany({
+            data: { sku: seedSku },
+            where: { orderId: existing.id, vendorId: seller.id },
+          }),
+        ]);
+        continue;
+      }
+
+      const createdAt = new Date(
+        Date.now() -
+          (sellerIndex * seededOrderStates.length + stateIndex) * 3_600_000,
+      );
+      await prisma.commerceOrder.create({
+        data: {
+          createdAt,
+          deliveryAddress: '50 Alvan Building, Toyin Street, Ikeja, Lagos',
+          deliveryFee: 0,
+          latitude: 6.6018,
+          longitude: 3.3515,
+          paymentMethod: 'online',
+          serviceFee: 0,
+          status: status === 'rejected' ? 'rejected' : 'confirmed',
+          subtotal: product.unitPrice,
+          total: product.unitPrice,
+          userId: buyer.id,
+          fulfillments: {
+            create: {
+              history: {
+                create: {
+                  actorUserId: seller.id,
+                  createdAt,
+                  reason: status === 'rejected' ? 'Out of stock' : null,
+                  status,
+                },
+              },
+              rejectionReason: status === 'rejected' ? 'Out of stock' : null,
+              status,
+              vendorId: seller.id,
+            },
+          },
+          items: {
+            create: {
+              deliveryAddress: '50 Alvan Building, Toyin Street, Ikeja, Lagos',
+              imageUri: product.imageUrls[0] ?? '',
+              name: product.name,
+              productId: product.id,
+              quantity: 1,
+              sku: seedSku,
+              subtitle: profile.category,
+              unitPrice: product.unitPrice,
+              vendorId: seller.id,
+              vendorName: profile.storeName,
+            },
+          },
+        },
+      });
+    }
+  }
+
+  console.log(`Ensured seeded orders for ${sellers.length} sellers.`);
+}
+
 /**
  * ============================================================
  * MAIN
@@ -749,20 +932,23 @@ async function seedInterests() {
  */
 
 async function main() {
-  console.log("Starting production seed...");
+  console.log('Starting production seed...');
 
   await seedInterests();
 
-  const users = await seedTestUsers();
+  await seedTestUsers();
+  const users = await prisma.user.findMany({ orderBy: { createdAt: 'asc' } });
+  await seedReferralsForUsers(users);
+  await seedOrdersForSellers(users);
 
   console.log(
-    `Seed complete: ${users.length} test users and ${interests.length} interests.`,
+    `Seed complete: ${users.length} users, referrals, seller orders, and ${interests.length} interests.`,
   );
 }
 
 main()
   .catch((error) => {
-    console.error("Seed failed:", error);
+    console.error('Seed failed:', error);
     process.exitCode = 1;
   })
   .finally(async () => {
@@ -774,24 +960,21 @@ main()
  * DISABLED SEED DATA
  * ============================================================
  *
- * The following seed functions are intentionally disabled while
+ * The following legacy seed functions are intentionally disabled while
  * setting up the new live database.
  *
  * We can enable them later when we are ready to populate:
  *
  * - Wallets
  * - Wallet transactions
- * - Referrals
  * - Vendor profiles
  * - Products
  * - Conversations
  * - Chat messages
- * - Orders
  * - Trust reviews
  * - Storefront images
  *
- * DO NOT put the old `findMany()` user loop back into `main()`
- * until we intentionally want to seed data for all users.
+ * Current referrals and seller orders are seeded above for all users and sellers.
  *
  * ============================================================
  */

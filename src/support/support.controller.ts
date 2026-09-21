@@ -42,7 +42,13 @@ abstract class SupportControllerBase {
     dto: SupportMessageDto,
     files: Express.Multer.File[] = [],
   ) {
-    return this.support.send(request.user.sub, ticketId, dto, files, this.audience);
+    return this.support.send(
+      request.user.sub,
+      ticketId,
+      dto,
+      files,
+      this.audience,
+    );
   }
 
   attachment(
@@ -72,17 +78,26 @@ export class SellerSupportController extends SupportControllerBase {
   }
 
   @Get('tickets')
-  tickets(@Req() request: AuthenticatedRequest, @Query() query: SupportListDto) {
+  tickets(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: SupportListDto,
+  ) {
     return this.list(request, query);
   }
 
   @Post('tickets')
-  create(@Req() request: AuthenticatedRequest, @Body() dto: CreateSupportTicketDto) {
+  create(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: CreateSupportTicketDto,
+  ) {
     return this.support.create(request.user.sub, dto);
   }
 
   @Get('tickets/:ticketId')
-  ticket(@Req() request: AuthenticatedRequest, @Param('ticketId') ticketId: string) {
+  ticket(
+    @Req() request: AuthenticatedRequest,
+    @Param('ticketId') ticketId: string,
+  ) {
     return this.detail(request, ticketId);
   }
 
@@ -114,12 +129,18 @@ export class AdminSupportController extends SupportControllerBase {
   protected readonly audience = 'admin' as const;
 
   @Get('tickets')
-  tickets(@Req() request: AuthenticatedRequest, @Query() query: SupportListDto) {
+  tickets(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: SupportListDto,
+  ) {
     return this.list(request, query);
   }
 
   @Get('tickets/:ticketId')
-  ticket(@Req() request: AuthenticatedRequest, @Param('ticketId') ticketId: string) {
+  ticket(
+    @Req() request: AuthenticatedRequest,
+    @Param('ticketId') ticketId: string,
+  ) {
     return this.detail(request, ticketId);
   }
 
