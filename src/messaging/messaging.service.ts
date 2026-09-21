@@ -29,6 +29,10 @@ export class MessagingService {
     return conversation;
   }
 
+  async assertParticipant(userId: string, id: string) {
+    await this.requireParticipant(userId, id);
+  }
+
   private pruneTyping(conversationId?: string) {
     const now = Date.now();
     const pruneOne = (id: string, users: Map<string, number>) => {
