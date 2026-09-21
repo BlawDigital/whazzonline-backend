@@ -15,7 +15,11 @@ export class ReferralsService {
   }) {
     const complete = referral.status === 'COMPLETED';
     const completed = (id: string, label: string, at = referral.createdAt) => ({
-      id, label, state: 'complete', timestamp: at.toISOString(), description: null,
+      id,
+      label,
+      state: 'complete',
+      timestamp: at.toISOString(),
+      description: null,
     });
     return {
       ...referral,
@@ -28,16 +32,42 @@ export class ReferralsService {
             completed('joined', 'Joined Whazzonline'),
             completed('first-month', 'First Month (Free)'),
             completed('first-3-payments', 'First 3 Payment'),
-            completed('reward', 'Reward Credited', referral.completedAt ?? referral.createdAt),
-            completed('recurring', 'Recurring Rewards', referral.completedAt ?? referral.createdAt),
+            completed(
+              'reward',
+              'Reward Credited',
+              referral.completedAt ?? referral.createdAt,
+            ),
+            completed(
+              'recurring',
+              'Recurring Rewards',
+              referral.completedAt ?? referral.createdAt,
+            ),
           ]
         : [
             completed('activated', 'Referral Activated'),
             completed('joined', 'Joined Whazzonline'),
             completed('first-month', 'First Month (Free)'),
-            { id: 'first-3-payments', label: 'First 3 Payment', state: 'current', timestamp: null, description: 'In progress...' },
-            { id: 'reward', label: 'Reward Credited', state: 'pending', timestamp: null, description: 'Pending...' },
-            { id: 'recurring', label: 'Recurring Rewards', state: 'pending', timestamp: null, description: 'Pending...' },
+            {
+              id: 'first-3-payments',
+              label: 'First 3 Payment',
+              state: 'current',
+              timestamp: null,
+              description: 'In progress...',
+            },
+            {
+              id: 'reward',
+              label: 'Reward Credited',
+              state: 'pending',
+              timestamp: null,
+              description: 'Pending...',
+            },
+            {
+              id: 'recurring',
+              label: 'Recurring Rewards',
+              state: 'pending',
+              timestamp: null,
+              description: 'Pending...',
+            },
           ],
     };
   }
