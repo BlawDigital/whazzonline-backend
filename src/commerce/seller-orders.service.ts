@@ -1,9 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
+import { DeliveryProvider, type DeliveryLevel } from './delivery.provider';
 import { lockOrder, syncOrder } from './fulfillment';
 
-const deliveryCapability = { available: false, reason: 'Courier booking and live tracking are not configured. Arrange delivery directly with the customer.' };
-const supportCapability = { available: true, liveChat: false };
+const deliveryCapability = { available: true, mode: 'mock', provider: 'mock' };
+const supportCapability = { available: true, liveChat: true };
 
 type SellerOrderDb = Pick<PrismaService, 'commerceOrder' | 'sellerFulfillment'>;
 
@@ -32,7 +33,10 @@ function mapOrderStatusToFulfillmentStatus(status: string) {
 
 @Injectable()
 export class SellerOrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly deliveryProvider: DeliveryProvider,
+  ) {}
 
   capabilities() { return { delivery: deliveryCapability, support: supportCapability }; }
 
@@ -43,7 +47,7 @@ export class SellerOrdersService {
   }, tx: SellerOrderDb = this.prisma) {
     const existing = await tx.sellerFulfillment.findUnique({
       where: { orderId_vendorId: { orderId: order.id, vendorId: userId } },
-      include: { history: { orderBy: { createdAt: 'asc' } } },
+      include: { history: { orderBy: { createdAt: 'asc' } }, deliveryRequest: true },
     });
     if (existing) return existing;
 
@@ -60,7 +64,7 @@ export class SellerOrdersService {
           },
         },
       },
-      include: { history: { orderBy: { createdAt: 'asc' } } },
+      include: { history: { orderBy: { createdAt: 'asc' } }, deliveryRequest: true },
     });
 
     if (status === 'delivered') {
@@ -85,8 +89,8 @@ export class SellerOrdersService {
       where: { id, items: { some: { vendorId: userId } } },
       include: {
         items: { where: { vendorId: userId } },
-        user: { select: { id: true, firstName: true, lastName: true } },
-        fulfillments: { where: { vendorId: userId }, include: { history: { orderBy: { createdAt: 'asc' } } } },
+        user: { select: { id: true, firstName: true, lastName: true, phone: true, avatarUrl: true } },
+        fulfillments: { where: { vendorId: userId }, include: { history: { orderBy: { createdAt: 'asc' } }, deliveryRequest: true } },
       },
     });
     if (!order) throw new NotFoundException('Order not found.');
@@ -96,10 +100,18 @@ export class SellerOrdersService {
     return {
       id, createdAt: order.createdAt.toISOString(), status: fulfillment.status,
       rejectionReason: fulfillment.rejectionReason,
-      customer: { id: order.user.id, name: [order.user.firstName, order.user.lastName].filter(Boolean).join(' ') || 'Buyer' },
-      deliveryAddress: order.deliveryAddress, items: order.items, subtotal, total: subtotal,
+      displayId: order.id.slice(0, 8).toUpperCase(),
+      customer: { id: order.user.id, name: [order.user.firstName, order.user.lastName].filter(Boolean).join(' ') || 'Buyer', phone: order.user.phone, avatarUrl: order.user.avatarUrl },
+      deliveryAddress: order.deliveryAddress,
+      items: order.items.map((item) => ({
+        id: item.id, productId: item.productId, name: item.name,
+        imageUrl: item.imageUri, quantity: item.quantity, unitPrice: item.unitPrice,
+        variant: [item.selectedColor, item.selectedSize, ...Object.values(item.selectedVariants as Record<string, string>)].filter(Boolean).join(' · ') || undefined,
+      })),
+      subtotal, total: subtotal,
       paymentMethod: order.paymentMethod, paymentStatus: 'unverified',
-      history: fulfillment.history, issues, ...this.capabilities(),
+      latitude: order.latitude, longitude: order.longitude,
+      history: fulfillment.history, issues, deliveryRequest: fulfillment.deliveryRequest, ...this.capabilities(),
     };
   }
 
@@ -128,6 +140,12 @@ export class SellerOrdersService {
       const changed = await tx.sellerFulfillment.updateMany({ where: { id: current.id, status: current.status }, data: { status, rejectionReason: status === 'rejected' ? reason!.trim() : null } });
       if (changed.count !== 1) throw new ConflictException('The order changed. Refresh and try again.');
       await tx.sellerFulfillmentEvent.create({ data: { fulfillmentId: current.id, actorUserId: userId, status, reason: status === 'rejected' ? reason!.trim() : null } });
+      if (status === 'out_for_delivery' || status === 'delivered') {
+        await tx.deliveryRequest.updateMany({
+          where: { fulfillmentId: current.id },
+          data: { status: status === 'delivered' ? 'delivered' : 'out_for_delivery' },
+        });
+      }
       await syncOrder(tx, id);
     });
     return this.detail(userId, id);
@@ -135,11 +153,53 @@ export class SellerOrdersService {
 
   async delivery(userId: string, id: string) {
     const order = await this.detail(userId, id);
-    return { ...deliveryCapability, status: order.status, history: order.history };
+    const quotes = this.deliveryProvider.quotes().map((quote) => ({
+      id: quote.serviceLevel,
+      name: quote.serviceLevel === 'priority' ? 'Priority Express' : 'Standard Delivery',
+      description: quote.mode === 'mock' ? 'Simulated courier for testing' : undefined,
+      etaLabel: `ETA: ${quote.etaMinutes} mins`,
+      price: quote.fee,
+      currency: 'NGN',
+    }));
+    const request = order.deliveryRequest;
+    return {
+      ...deliveryCapability,
+      status: request?.status ?? order.status,
+      statusLabel: request ? request.status.replace(/_/g, ' ') : 'Delivery not requested',
+      etaLabel: request ? `Arriving in about ${request.etaMinutes} mins` : null,
+      coordinates: request ? { latitude: order.latitude, longitude: order.longitude } : null,
+      updatedAt: request?.updatedAt?.toISOString?.() ?? null,
+      timeline: order.history,
+      request,
+      quotes,
+    };
   }
 
-  async requestDelivery(userId: string, id: string) {
-    await this.detail(userId, id);
-    throw new ServiceUnavailableException(deliveryCapability.reason);
+  async requestDelivery(userId: string, id: string, serviceLevel: DeliveryLevel) {
+    const order = await this.prisma.commerceOrder.findFirst({
+      where: { id, items: { some: { vendorId: userId } } },
+      include: { fulfillments: { where: { vendorId: userId }, include: { deliveryRequest: true } } },
+    });
+    if (!order) throw new NotFoundException('Order not found.');
+    const fulfillment = order.fulfillments[0] ?? await this.ensureFulfillment(userId, order);
+    if (!['processing', 'ready', 'out_for_delivery'].includes(fulfillment.status)) {
+      throw new ConflictException('Accept and prepare the order before requesting delivery.');
+    }
+    if (fulfillment.deliveryRequest) {
+      if (fulfillment.deliveryRequest.serviceLevel !== serviceLevel) {
+        throw new ConflictException('A delivery request already exists for this order.');
+      }
+      return this.delivery(userId, id);
+    }
+    const booking = this.deliveryProvider.book(fulfillment.id, serviceLevel);
+    await this.prisma.deliveryRequest.create({
+      data: {
+        fulfillmentId: fulfillment.id, provider: booking.provider,
+        serviceLevel: booking.serviceLevel, status: booking.status,
+        fee: booking.fee, etaMinutes: booking.etaMinutes,
+        trackingCode: booking.trackingCode, rider: booking.rider,
+      },
+    });
+    return this.delivery(userId, id);
   }
 }

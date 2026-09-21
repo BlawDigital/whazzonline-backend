@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
-import { RejectSellerOrderDto, UpdateSellerOrderDto } from './dto/seller-order.dto';
+import { DeliveryRequestDto, RejectSellerOrderDto, UpdateSellerOrderDto } from './dto/seller-order.dto';
 import { SellerOrdersService } from './seller-orders.service';
 
 @Controller('seller')
@@ -15,5 +15,5 @@ export class SellerOrdersController {
   @Post('orders/:id/reject') reject(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: RejectSellerOrderDto) { return this.orders.transition(req.user.sub, id, 'rejected', dto.reason); }
   @Patch('orders/:id/status') status(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: UpdateSellerOrderDto) { return this.orders.transition(req.user.sub, id, dto.status); }
   @Get('orders/:id/delivery') delivery(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.orders.delivery(req.user.sub, id); }
-  @Post('orders/:id/delivery-requests') requestDelivery(@Req() req: AuthenticatedRequest, @Param('id') id: string) { return this.orders.requestDelivery(req.user.sub, id); }
+  @Post('orders/:id/delivery-requests') requestDelivery(@Req() req: AuthenticatedRequest, @Param('id') id: string, @Body() dto: DeliveryRequestDto) { return this.orders.requestDelivery(req.user.sub, id, dto.serviceLevel); }
 }
