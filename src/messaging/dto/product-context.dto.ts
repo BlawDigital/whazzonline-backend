@@ -1,4 +1,12 @@
-import { IsInt, IsObject, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class ProductContextDto {
   @IsOptional() @IsString() @MaxLength(100) productId?: string;

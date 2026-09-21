@@ -26,7 +26,10 @@ export const chatUploadOptions = {
     callback: (error: Error | null, accept: boolean) => void,
   ) => {
     if (!extensions[file.mimetype]) {
-      callback(new BadRequestException('Only JPEG, PNG, and WebP images are allowed.'), false);
+      callback(
+        new BadRequestException('Only JPEG, PNG, and WebP images are allowed.'),
+        false,
+      );
       return;
     }
     callback(null, true);

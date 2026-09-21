@@ -27,7 +27,10 @@ export class MessagingController {
 
   @Get()
   list(@Req() request: AuthenticatedRequest) {
-    return this.messaging.list(request.user.sub, request.path.startsWith('/seller/'));
+    return this.messaging.list(
+      request.user.sub,
+      request.path.startsWith('/seller/'),
+    );
   }
 
   @Post()
@@ -68,7 +71,10 @@ export class MessagingController {
   }
 
   @Post(':conversationId/read')
-  read(@Req() request: AuthenticatedRequest, @Param('conversationId') id: string) {
+  read(
+    @Req() request: AuthenticatedRequest,
+    @Param('conversationId') id: string,
+  ) {
     return this.messaging.read(request.user.sub, id);
   }
 
