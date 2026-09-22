@@ -11,8 +11,12 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
+  const allowedOrigins = [
+    'http://localhost:5173',
+    'https://whazzonline.com',
+  ];
   app.enableCors({
-    origin: process.env.FRONTEND_URL,
+    origin: allowedOrigins,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });

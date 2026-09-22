@@ -206,7 +206,7 @@ export class AuthService {
       throw new NotFoundException('No account was found for this email.');
     await this.otpService.verifyEmailOtp(
       normalizedEmail,
-      code,
+      code, 
       'PASSWORD_RESET',
       user.id,
     );
@@ -418,8 +418,7 @@ export class AuthService {
 
   async updateProfile( userId: string,updateProfileDto: UpdateProfileDto,) {
     const user = await this.prisma.user.findUnique({
-      where: {
-        id: userId,
+      where: {        id: userId,
       },
     });
 
