@@ -112,6 +112,7 @@ export class MessagingService {
     userId: string,
   ) {
     return {
+      clientMessageId: message.clientMessageId ?? undefined,
       conversationId: message.conversationId,
       direction: message.senderUserId === userId ? 'outgoing' : 'incoming',
       id: message.id,
@@ -302,8 +303,23 @@ export class MessagingService {
     const conversation = context
       ? await this.prisma.$transaction(async (tx) => {
           const record = await tx.conversation.upsert(args);
-          await tx.chatMessage.create({
+          const latest = record.messages[0];
+          const existing = dto.clientMessageId
+            ? await tx.chatMessage.findUnique({
+                where: {
+                  conversationId_clientMessageId: {
+                    clientMessageId: dto.clientMessageId,
+                    conversationId: record.id,
+                  },
+                },
+              })
+            : latest && this.sameProductContext(latest.productContext, context)
+              ? latest
+              : null;
+          if (existing) return record;
+          const created = await tx.chatMessage.create({
             data: {
+              clientMessageId: dto.clientMessageId,
               conversationId: record.id,
               senderUserId: userId,
               kind: 'TEXT',
@@ -313,7 +329,7 @@ export class MessagingService {
           });
           return tx.conversation.update({
             where: { id: record.id },
-            data: { updatedAt: new Date() },
+            data: { updatedAt: created.createdAt },
             include: conversationInclude,
           });
         })
@@ -343,6 +359,17 @@ export class MessagingService {
   }
   async send(userId: string, conversationId: string, dto: SendMessageDto) {
     const conversation = await this.requireParticipant(userId, conversationId);
+    if (dto.clientMessageId) {
+      const existing = await this.prisma.chatMessage.findUnique({
+        where: {
+          conversationId_clientMessageId: {
+            clientMessageId: dto.clientMessageId,
+            conversationId,
+          },
+        },
+      });
+      if (existing) return this.mapMessage(existing, userId);
+    }
     const productContext = await this.productContext(
       conversation.vendorProfileId,
       dto,
@@ -357,29 +384,69 @@ export class MessagingService {
       !/^\/uploads\/[a-zA-Z0-9/_-]+\.[a-zA-Z0-9]+$/.test(dto.imageUri)
     )
       throw new BadRequestException('Upload the attachment before sending it.');
-    const message = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.chatMessage.create({
-        data: {
-          conversationId,
-          imageUri: dto.imageUri,
-          kind: dto.kind.toUpperCase() as 'TEXT' | 'IMAGE' | 'VOICE',
-          senderUserId: userId,
-          text:
-            dto.text?.trim() ||
-            (productContext
-              ? `I'm interested in ${productContext.name}.`
-              : undefined),
-          productContext,
+    let message: Prisma.ChatMessageGetPayload<object>;
+    try {
+      message = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.chatMessage.create({
+          data: {
+            clientMessageId: dto.clientMessageId,
+            conversationId,
+            imageUri: dto.imageUri,
+            kind: dto.kind.toUpperCase() as 'TEXT' | 'IMAGE' | 'VOICE',
+            senderUserId: userId,
+            text:
+              dto.text?.trim() ||
+              (productContext
+                ? `I'm interested in ${productContext.name}.`
+                : undefined),
+            productContext,
+          },
+        });
+        await tx.conversation.update({
+          where: { id: conversationId },
+          data: { updatedAt: created.createdAt },
+        });
+        return created;
+      });
+    } catch (error) {
+      if (!dto.clientMessageId || !this.isUniqueConstraintError(error))
+        throw error;
+      const existing = await this.prisma.chatMessage.findUnique({
+        where: {
+          conversationId_clientMessageId: {
+            clientMessageId: dto.clientMessageId,
+            conversationId,
+          },
         },
       });
-      await tx.conversation.update({
-        where: { id: conversationId },
-        data: { updatedAt: created.createdAt },
-      });
-      return created;
-    });
+      if (!existing) throw error;
+      message = existing;
+    }
     this.setTypingState(userId, conversationId, false);
     return this.mapMessage(message, userId);
+  }
+
+  private sameProductContext(
+    value: Prisma.JsonValue | null,
+    context: Awaited<ReturnType<MessagingService['productContext']>>,
+  ) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || !context)
+      return false;
+    return (
+      value.productId === context.productId &&
+      value.quantity === context.quantity &&
+      JSON.stringify(value.selectedVariants ?? {}) ===
+        JSON.stringify(context.selectedVariants ?? {})
+    );
+  }
+
+  private isUniqueConstraintError(error: unknown) {
+    return Boolean(
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      error.code === 'P2002',
+    );
   }
 
   async typing(userId: string, conversationId: string, typing: boolean) {
