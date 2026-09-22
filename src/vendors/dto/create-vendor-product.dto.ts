@@ -1,6 +1,7 @@
 import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  ArrayMaxSize,
   IsInt,
   IsNotEmpty,
   IsObject,
@@ -12,10 +13,26 @@ import {
 } from 'class-validator';
 
 export class VendorProductVariantDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(80)
-  type!: string;
+  type?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  color?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  size?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  imageIndexes: number[] = [];
 
   @Type(() => Number)
   @IsInt()
@@ -45,6 +62,7 @@ export class CreateVendorProductDto {
     }
   })
   @IsArray()
+  @ArrayMaxSize(2)
   @IsString({ each: true })
   subCategories: string[] = [];
 

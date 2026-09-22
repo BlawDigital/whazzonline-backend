@@ -415,14 +415,15 @@ export class SellerOrdersService {
     ]);
     if (!order || !vendor)
       throw new NotFoundException('Order or seller profile not found.');
+    const clientThreadId = `order:${orderId}:${vendor.id}`;
     const conversation = await this.prisma.conversation.upsert({
-      where: {
-        buyerUserId_vendorProfileId: {
-          buyerUserId: order.userId,
-          vendorProfileId: vendor.id,
-        },
+      where: { clientThreadId },
+      create: {
+        buyerUserId: order.userId,
+        clientThreadId,
+        subject: `Order ${orderId}`,
+        vendorProfileId: vendor.id,
       },
-      create: { buyerUserId: order.userId, vendorProfileId: vendor.id },
       update: {},
       select: { id: true },
     });

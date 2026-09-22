@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   Post,
   Req,
   UploadedFile,
@@ -17,6 +18,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SendMessageDto } from './dto/send-message.dto';
 import { StartConversationDto } from './dto/start-conversation.dto';
 import { ConversationTypingDto } from './dto/conversation-typing.dto';
+import { UpdateConversationStatusDto } from './dto/update-conversation-status.dto';
 import { MessagingService } from './messaging.service';
 import { chatUploadOptions, publicChatUploadUrl } from './chat-upload.config';
 
@@ -76,6 +78,19 @@ export class MessagingController {
     @Param('conversationId') id: string,
   ) {
     return this.messaging.read(request.user.sub, id);
+  }
+
+  @Patch(':conversationId/status')
+  status(
+    @Req() request: AuthenticatedRequest,
+    @Param('conversationId') conversationId: string,
+    @Body() dto: UpdateConversationStatusDto,
+  ) {
+    return this.messaging.updateStatus(
+      request.user.sub,
+      conversationId,
+      dto.status,
+    );
   }
 
   @Post(':conversationId/typing')

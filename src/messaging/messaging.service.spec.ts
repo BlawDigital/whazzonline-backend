@@ -12,6 +12,7 @@ describe('MessagingService', () => {
       findUnique: jest.fn(),
     },
     conversation: {
+      create: jest.fn(),
       findFirst: jest.fn(),
       upsert: jest.fn(),
     },
@@ -30,10 +31,16 @@ describe('MessagingService', () => {
     prisma.vendorProfile.findFirst.mockResolvedValue({
       id: 'vendor-profile-id',
     });
-    prisma.conversation.upsert.mockResolvedValue({
+    prisma.conversation.findFirst.mockResolvedValue(null);
+    prisma.conversation.create.mockResolvedValue({
+      buyer: { avatarUrl: null, firstName: 'Buyer', lastName: null },
+      buyerLastReadAt: null,
       favorite: false,
       id: 'conversation-id',
       messages: [],
+      sellerLastReadAt: null,
+      status: 'OPEN',
+      subject: 'Store enquiry',
       updatedAt: new Date('2026-09-15T10:00:00.000Z'),
       vendorProfile: {
         logoUrl: 'https://example.com/vendor.png',
@@ -45,17 +52,12 @@ describe('MessagingService', () => {
 
     const result = await service.start('buyer-user-id', 'vendor-user-id');
 
-    expect(prisma.conversation.upsert).toHaveBeenCalledWith(
+    expect(prisma.conversation.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: {
+        data: {
           buyerUserId: 'buyer-user-id',
+          subject: 'Store enquiry',
           vendorProfileId: 'vendor-profile-id',
-        },
-        where: {
-          buyerUserId_vendorProfileId: {
-            buyerUserId: 'buyer-user-id',
-            vendorProfileId: 'vendor-profile-id',
-          },
         },
       }),
     );
@@ -99,11 +101,14 @@ describe('MessagingService', () => {
     };
     const conversation = {
       buyer: { avatarUrl: null, firstName: 'Buyer', lastName: null },
+      buyerUserId: 'buyer-user-id',
       buyerLastReadAt: null,
       favorite: false,
       id: 'conversation-id',
       messages: [],
       sellerLastReadAt: null,
+      status: 'OPEN',
+      subject: 'Running shoes',
       updatedAt: createdAt,
       vendorProfile: {
         logoUrl: null,
@@ -111,6 +116,7 @@ describe('MessagingService', () => {
         storeName: 'Shoe Store',
         userId: 'vendor-user-id',
       },
+      vendorProfileId: 'vendor-profile-id',
     };
     const tx = {
       chatMessage: {
@@ -124,7 +130,6 @@ describe('MessagingService', () => {
         update: jest
           .fn()
           .mockResolvedValue({ ...conversation, messages: [message] }),
-        upsert: jest.fn().mockResolvedValue(conversation),
       },
     };
     prisma.$transaction.mockImplementation(
@@ -134,6 +139,7 @@ describe('MessagingService', () => {
     prisma.vendorProfile.findFirst.mockResolvedValue({
       id: 'vendor-profile-id',
     });
+    prisma.conversation.upsert.mockResolvedValue(conversation);
     prisma.product.findFirst.mockResolvedValue({
       id: 'product-id',
       imageUrls: ['/uploads/products/shoes.jpg'],
@@ -148,7 +154,10 @@ describe('MessagingService', () => {
 
     const input = {
       clientMessageId: 'client-message-id',
+      clientThreadId: 'client-thread-id',
+      newThread: true,
       productId: 'product-id',
+      vendorId: 'vendor-user-id',
     };
     await service.start('buyer-user-id', 'vendor-user-id', input);
     await service.start('buyer-user-id', 'vendor-user-id', input);

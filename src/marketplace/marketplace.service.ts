@@ -103,7 +103,7 @@ export class MarketplaceService {
           id: product.id,
           likeCount: product._count?.likes ?? 0,
           imageUri: product.imageUrls[0] ?? '',
-          imageUrls: product.imageUrls,
+          imageUris: product.imageUrls,
           location: `${product.vendorProfile.city}, ${product.vendorProfile.state}`,
           mapAddress: [
             product.vendorProfile.address,

@@ -5,8 +5,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import type { Prisma } from '../../generated/prisma/client';
+import { randomUUID } from 'node:crypto';
 import { MessageKind, SendMessageDto } from './dto/send-message.dto';
 import { ProductContextDto } from './dto/product-context.dto';
+import { StartConversationDto } from './dto/start-conversation.dto';
+import { ConversationStatusValue } from './dto/update-conversation-status.dto';
 
 const conversationInclude = {
   messages: { orderBy: { createdAt: 'desc' as const }, take: 1 },
@@ -141,6 +144,9 @@ export class MessagingService {
           : conversation.vendorProfile.logoUrl) ?? undefined,
       favorite: conversation.favorite,
       id: conversation.id,
+      status: conversation.status.toLowerCase(),
+      subject: conversation.subject ?? undefined,
+      canManageStatus: seller,
       name: seller
         ? [conversation.buyer.firstName, conversation.buyer.lastName]
             .filter(Boolean)
@@ -225,40 +231,50 @@ export class MessagingService {
     }
     const selectedVariants = dto.selectedVariants ?? {};
     const variants = Array.isArray(product.variants) ? product.variants : [];
+    const selectableKeys = ['color', 'size', 'variant'];
     for (const [key, value] of Object.entries(selectedVariants)) {
       if (
-        !key ||
+        !selectableKeys.includes(key) ||
         key.length > 80 ||
         typeof value !== 'string' ||
         !value ||
         value.length > 80
       )
         throw new BadRequestException('Invalid product variant.');
-      const match = variants.find(
-        (entry) =>
-          entry &&
-          typeof entry === 'object' &&
-          !Array.isArray(entry) &&
-          entry.type === value,
+    }
+    const variantObjects = variants.filter(
+      (entry): entry is Prisma.JsonObject =>
+        Boolean(entry && typeof entry === 'object' && !Array.isArray(entry)),
+    );
+    const requiredKeys = selectableKeys.filter((key) =>
+      variantObjects.some(
+        (entry) => typeof entry[key === 'variant' ? 'type' : key] === 'string',
+      ),
+    );
+    if (requiredKeys.some((key) => !selectedVariants[key])) {
+      throw new BadRequestException('Choose all product options first.');
+    }
+    const selectedCombination = variantObjects.find((entry) =>
+      requiredKeys.every(
+        (key) =>
+          entry[key === 'variant' ? 'type' : key] === selectedVariants[key],
+      ),
+    );
+    if (requiredKeys.length && !selectedCombination) {
+      throw new BadRequestException(
+        'The selected product variant is not available.',
       );
-      if (
-        !match ||
-        typeof match !== 'object' ||
-        Array.isArray(match) ||
-        typeof match.quantity !== 'number'
-      ) {
-        throw new BadRequestException(
-          'The selected product variant is not available.',
-        );
-      }
-      if (match.quantity <= 0) {
+    }
+    if (selectedCombination) {
+      const variantQuantity = selectedCombination.quantity;
+      if (typeof variantQuantity !== 'number' || variantQuantity <= 0) {
         throw new BadRequestException(
           'That variant is out of stock right now.',
         );
       }
-      if (match.quantity < quantity) {
+      if (variantQuantity < quantity) {
         throw new BadRequestException(
-          `Only ${match.quantity} item${match.quantity === 1 ? '' : 's'} available for this variant.`,
+          `Only ${variantQuantity} item${variantQuantity === 1 ? '' : 's'} available for this variant.`,
         );
       }
     }
@@ -280,7 +296,11 @@ export class MessagingService {
       selectedVariants,
     };
   }
-  async start(userId: string, vendorId: string, dto: ProductContextDto = {}) {
+  async start(
+    userId: string,
+    vendorId: string,
+    dto: StartConversationDto = { vendorId },
+  ) {
     const vendor = await this.prisma.vendorProfile.findFirst({
       where: { setupCompleted: true, userId: vendorId },
       select: { id: true },
@@ -289,20 +309,59 @@ export class MessagingService {
     if (vendorId === userId)
       throw new BadRequestException('You cannot message your own store.');
     const context = await this.productContext(vendor.id, dto);
-    const args = {
-      where: {
-        buyerUserId_vendorProfileId: {
+    let record: Conversation;
+    if (dto.conversationId) {
+      const existing = await this.prisma.conversation.findFirst({
+        where: {
+          id: dto.conversationId,
           buyerUserId: userId,
           vendorProfileId: vendor.id,
         },
-      },
-      create: { buyerUserId: userId, vendorProfileId: vendor.id },
-      update: {},
-      include: conversationInclude,
-    };
+        include: conversationInclude,
+      });
+      if (!existing) throw new NotFoundException('Conversation not found.');
+      record = existing;
+    } else if (dto.newThread) {
+      const clientThreadId = dto.clientThreadId || randomUUID();
+      record = await this.prisma.conversation.upsert({
+        where: { clientThreadId },
+        create: {
+          buyerUserId: userId,
+          clientThreadId,
+          subject: context?.name ?? 'Store enquiry',
+          vendorProfileId: vendor.id,
+        },
+        update: {},
+        include: conversationInclude,
+      });
+      if (
+        record.buyerUserId !== userId ||
+        record.vendorProfileId !== vendor.id
+      ) {
+        throw new BadRequestException('Invalid conversation request.');
+      }
+    } else {
+      record =
+        (await this.prisma.conversation.findFirst({
+          where: {
+            buyerUserId: userId,
+            vendorProfileId: vendor.id,
+            status: { in: ['OPEN', 'PENDING'] },
+          },
+          include: conversationInclude,
+          orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        })) ??
+        (await this.prisma.conversation.create({
+          data: {
+            buyerUserId: userId,
+            subject: context?.name ?? 'Store enquiry',
+            vendorProfileId: vendor.id,
+          },
+          include: conversationInclude,
+        }));
+    }
     const conversation = context
       ? await this.prisma.$transaction(async (tx) => {
-          const record = await tx.conversation.upsert(args);
           const latest = record.messages[0];
           const existing = dto.clientMessageId
             ? await tx.chatMessage.findUnique({
@@ -333,8 +392,26 @@ export class MessagingService {
             include: conversationInclude,
           });
         })
-      : await this.prisma.conversation.upsert(args);
+      : record;
     return this.mapConversation(conversation, userId);
+  }
+
+  async updateStatus(
+    userId: string,
+    conversationId: string,
+    status: ConversationStatusValue,
+  ) {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, vendorProfile: { userId } },
+      include: conversationInclude,
+    });
+    if (!conversation) throw new NotFoundException('Conversation not found.');
+    const updated = await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { status },
+      include: conversationInclude,
+    });
+    return this.mapConversation(updated, userId);
   }
   async messages(userId: string, conversationId: string) {
     await this.requireParticipant(userId, conversationId);
