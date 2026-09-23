@@ -35,6 +35,9 @@ export class SellerOrdersController {
   @Get('orders') list(@Req() req: AuthenticatedRequest) {
     return this.orders.list(req.user.sub);
   }
+  @Get('notifications') notifications(@Req() req: AuthenticatedRequest) {
+    return this.orders.notifications(req.user.sub);
+  }
   @Get('orders/:id') detail(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,

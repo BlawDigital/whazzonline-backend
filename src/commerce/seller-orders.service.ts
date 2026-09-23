@@ -105,6 +105,44 @@ export class SellerOrdersService {
     };
   }
 
+  async notifications(userId: string) {
+    const { orders } = await this.list(userId);
+    const notifications = orders
+      .flatMap((order) => {
+        const history = Array.isArray(order.history) ? order.history : [];
+        if (!history.length) {
+          return [
+            {
+              body: `Order #${order.displayId} is waiting for your review.`,
+              createdAt: order.createdAt,
+              id: `order:${order.id}`,
+              orderId: order.id,
+              read: false,
+              title: 'New order',
+              type: 'order',
+            },
+          ];
+        }
+        return history.map((event) => ({
+          body:
+            event.status === 'pending'
+              ? `Order #${order.displayId} is waiting for your review.`
+              : `Order #${order.displayId} is now ${event.status.replace(/_/g, ' ')}.`,
+          createdAt: event.createdAt.toISOString(),
+          id: event.id,
+          orderId: order.id,
+          read: event.actorUserId === userId,
+          title: event.status === 'pending' ? 'New order' : 'Order update',
+          type: 'order',
+        }));
+      })
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return {
+      notifications: notifications.slice(0, 50),
+      unreadCount: notifications.filter((item) => !item.read).length,
+    };
+  }
+
   async detail(userId: string, id: string) {
     const order = await this.prisma.commerceOrder.findFirst({
       where: { id, items: { some: { vendorId: userId } } },
