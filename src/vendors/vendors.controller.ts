@@ -187,6 +187,13 @@ export class VendorsController {
     return this.vendorsService.archiveProduct(userId, productId);
   }
 
+  @Post(':userId/products/:productId/activate')
+  @UseGuards(JwtAuthGuard)
+  activateProduct(@Req() request: AuthenticatedRequest,@Param('userId') userId: string,@Param('productId') productId: string) {
+    this.requireOwner(request, userId);
+    return this.vendorsService.activateProduct(userId,productId);
+  }
+
   @Delete(':userId/products/:productId')
   @UseGuards(JwtAuthGuard)
   deleteProduct(

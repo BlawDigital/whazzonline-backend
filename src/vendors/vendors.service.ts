@@ -681,8 +681,20 @@ export class VendorsService {
     productId: string,
     dto: UpdateVendorProductDto,
   ) {
-    await this.requireOwnedProduct(userId, productId);
-    return this.prisma.product.update({ where: { id: productId }, data: dto });
+    const product = await this.requireOwnedProduct(userId, productId);
+    if(product.status === 'DELETED')throw new BadRequestException('Deleted products cannot be edited.');
+    if(dto.unitPrice !== undefined && product.promoPrice && product.promoEndsAt && product.promoEndsAt > new Date() && dto.unitPrice <= product.promoPrice)throw new BadRequestException('Actual price must be higher than the active promo price.');
+    const variants = dto.variants?.map(v => {
+      if(!v.type?.trim() && !v.color?.trim() && !v.size?.trim())throw new BadRequestException('Each variant needs a name, color, or size.');
+      if(v.imageIndexes.some(index => index >= product.imageUrls.length))throw new BadRequestException('Variant image is unavailable.');
+      return {type:v.type,color:v.color,size:v.size,quantity:v.quantity,imageIndexes:v.imageIndexes};
+    });
+    const stockVariants = variants ?? (Array.isArray(product.variants) ? product.variants : []);
+    let allocated = 0;
+    for(const v of stockVariants) if(v && typeof v === 'object' && 'quantity' in v && typeof v.quantity === 'number') allocated += v.quantity;
+    if(allocated > (dto.quantity ?? product.quantity))throw new BadRequestException('Variant quantities cannot exceed total stock.');
+    const fields = {name:dto.name,description:dto.description,unitPrice:dto.unitPrice,quantity:dto.quantity};
+    return this.prisma.product.update({ where: { id: productId }, data: {...fields,...(variants ? {variants} : {})} });
   }
 
   async archiveProduct(userId: string, productId: string) {
@@ -691,6 +703,14 @@ export class VendorsService {
       where: { id: productId },
       data: { status: 'ARCHIVED' },
     });
+  }
+
+  async activateProduct(userId: string, productId: string) {
+    const product = await this.requireOwnedProduct(userId, productId);
+    if(product.status !== 'ARCHIVED')throw new BadRequestException('Only archived products can be restored.');
+    const profile = await this.prisma.vendorProfile.findUnique({where:{userId}});
+    if(!profile?.setupCompleted)throw new BadRequestException('Complete store setup before restoring a product.');
+    return this.prisma.product.update({where:{id:productId},data:{status:'ACTIVE'}});
   }
 
   async deleteProduct(userId: string, productId: string) {

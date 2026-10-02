@@ -404,6 +404,7 @@ describe('VendorsService', () => {
         'vendor-id',
         {
           category: 'Fashion & Apparel',
+          subCategories: [], specifications: {},
           name: 'Jorani air sneakers',
           quantity: 3,
           unitPrice: 134000,
@@ -428,10 +429,11 @@ describe('VendorsService', () => {
       {
         category: 'Fashion & Apparel',
         mainCategory: 'Men Fashion',
+        subCategories: [], specifications: {},
         name: 'Jorani air sneakers',
         quantity: 3,
         unitPrice: 134000,
-        variants: [{ quantity: 2, type: 'Black / 42' }],
+        variants: [{ quantity: 2, type: 'Black / 42', imageIndexes: [] }],
       },
       ['/uploads/products/shoe.png'],
     );
@@ -442,6 +444,7 @@ describe('VendorsService', () => {
         description: undefined,
         imageUrls: ['/uploads/products/shoe.png'],
         mainCategory: 'Men Fashion',
+        subCategories: [], specifications: {},
         name: 'Jorani air sneakers',
         quantity: 3,
         specifications: undefined,
