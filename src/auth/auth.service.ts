@@ -242,6 +242,10 @@ export class AuthService {
     const normalizedPhone = phone ? normalizePhone(phone) : undefined;
     const normalizedEmail = email?.trim().toLowerCase();
 
+    if (registrationType === 'SELLER' && (!normalizedPhone || normalizedEmail)) {
+      throw new BadRequestException('Sellers must sign up with a verified phone number.');
+    }
+
     if (!normalizedPhone && !normalizedEmail) {
       throw new ConflictException('Email or phone number is required.');
     }

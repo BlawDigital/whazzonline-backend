@@ -294,6 +294,11 @@ export class VendorsService {
       })),
       profile: {
         ...store,
+        bankAccountName: undefined,
+        bankAccountNumber: undefined,
+        bankCode: undefined,
+        bankName: undefined,
+        cacUrl: undefined,
         avatarUrl: user.avatarUrl,
         trustReviewCount: _count.trustReviews,
         trustReviews: trustReviews.map((review) => ({
@@ -376,6 +381,12 @@ export class VendorsService {
     dto: CreateVendorProductDto,
     imageUrls: string[],
   ) {
+    if (dto.promoPrice !== undefined && dto.promoPrice >= dto.unitPrice) {
+      throw new BadRequestException('Promo price must be lower than the actual price.');
+    }
+    if (dto.promoDurationHours !== undefined && dto.promoPrice === undefined) {
+      throw new BadRequestException('Add a promo price before choosing a duration.');
+    }
     await this.requireVendorUser(userId);
     const profile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
@@ -438,6 +449,11 @@ export class VendorsService {
         specifications: dto.specifications,
         subCategories: dto.subCategories,
         unitPrice: dto.unitPrice,
+        ...(dto.promoPrice !== undefined ? {
+          promoPrice: dto.promoPrice,
+          promoStartsAt: new Date(),
+          promoEndsAt: new Date(Date.now() + (dto.promoDurationHours ?? 24) * 3600000),
+        } : {}),
         variants: normalizedVariants,
         vendorProfileId: profile.id,
       },
@@ -810,7 +826,6 @@ export class VendorsService {
 
     const identityComplete = Boolean(
       existing.logoUrl &&
-      existing.bannerUrl &&
       (user.registrationType !== 'BUSINESS' || existing.cacUrl),
     );
     const bankComplete = Boolean(
