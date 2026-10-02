@@ -439,7 +439,7 @@ export class MessagingService {
     if (dto.clientMessageId) {
       const existing = await this.prisma.chatMessage.findUnique({
         where: {
-          conversationId_clientMessageId: {
+          conversationId_clientMessageId:  {
             clientMessageId: dto.clientMessageId,
             conversationId,
           },
