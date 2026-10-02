@@ -5,5 +5,5 @@
     "outDir": "./.seed-dist",
     "sourceMap": false
   },
-  "include": ["prisma/seed.ts", "generated/prisma/**/*.ts"]
+  "include": ["prisma/seed.ts", "prisma/seed-media.ts", "prisma/seed-connection.ts", "generated/prisma/**/*.ts"]
 }

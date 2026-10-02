@@ -420,12 +420,23 @@ describe('VendorsService', () => {
     expect(prisma.product.create).toHaveBeenCalledWith({
       data: {
         category: 'Fashion & Apparel',
+        description: undefined,
         imageUrls: ['/uploads/products/shoe.png'],
         mainCategory: 'Men Fashion',
         name: 'Jorani air sneakers',
         quantity: 3,
+        specifications: undefined,
+        subCategories: undefined,
         unitPrice: 134000,
-        variants: [{ quantity: 2, type: 'Black / 42' }],
+        variants: [
+          {
+            color: undefined,
+            imageIndexes: [],
+            quantity: 2,
+            size: undefined,
+            type: 'Black / 42',
+          },
+        ],
         vendorProfileId: 'profile-id',
       },
     });

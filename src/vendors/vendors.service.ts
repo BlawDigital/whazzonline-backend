@@ -32,6 +32,10 @@ function normalizeVariantType(value: string) {
     : normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function normalizeOptionalVariant(value?: string) {
+  return value?.trim() ? normalizeVariantType(value) : undefined;
+}
+
 @Injectable()
 export class VendorsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -383,14 +387,32 @@ export class VendorsService {
         'Complete your vendor setup before adding products.',
       );
     }
-    const normalizedVariants = Array.from(
-      dto.variants.reduce((variants, variant) => {
-        const type = normalizeVariantType(variant.type);
-        variants.set(type, (variants.get(type) ?? 0) + variant.quantity);
-        return variants;
-      }, new Map<string, number>()),
-      ([type, quantity]) => ({ quantity, type }),
+    const normalizedVariants = dto.variants.map((variant) => {
+      const color = normalizeOptionalVariant(variant.color);
+      const size = normalizeOptionalVariant(variant.size);
+      const type = normalizeOptionalVariant(variant.type);
+      if (!color && !size && !type) {
+        throw new BadRequestException(
+          'Each product variant needs a color, size, or variant name.',
+        );
+      }
+      const imageIndexes = [...new Set(variant.imageIndexes ?? [])];
+      if (imageIndexes.some((index) => index >= imageUrls.length)) {
+        throw new BadRequestException(
+          'A variant points to a product image that was not uploaded.',
+        );
+      }
+      return { color, imageIndexes, quantity: variant.quantity, size, type };
+    });
+    const variantQuantity = normalizedVariants.reduce(
+      (total, variant) => total + variant.quantity,
+      0,
     );
+    if (normalizedVariants.length && variantQuantity > dto.quantity) {
+      throw new BadRequestException(
+        'Variant quantities cannot exceed the total product quantity.',
+      );
+    }
 
     if (dto.mainCategory) {
       await this.prisma.vendorCategory.upsert({

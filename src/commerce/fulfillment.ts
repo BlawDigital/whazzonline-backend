@@ -21,7 +21,11 @@ export async function syncOrder(tx: Prisma.TransactionClient, orderId: string) {
     WHERE "orderId" = ${orderId}
   `;
   const status = aggregateStatus(rows.map((row) => row.status));
-  await tx.commerceOrder.update({ where: { id: orderId }, data: {
-    status, completedAt: status === 'delivered' ? new Date() : null,
-  } });
+  await tx.commerceOrder.update({
+    where: { id: orderId },
+    data: {
+      status,
+      completedAt: status === 'delivered' ? new Date() : null,
+    },
+  });
 }

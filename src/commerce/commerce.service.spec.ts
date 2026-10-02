@@ -16,6 +16,7 @@ describe('CommerceService trust reviews', () => {
       findMany: jest.fn(),
     },
     product: { findFirst: jest.fn() },
+    sellerFulfillment: { create: jest.fn() },
     productLike: {
       count: jest.fn(),
       deleteMany: jest.fn(),
@@ -156,6 +157,14 @@ describe('CommerceService trust reviews', () => {
     );
     expect(prisma.commerceCartItem.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['cart-item-id'] }, userId: 'buyer-id' },
+    });
+    expect(prisma.sellerFulfillment.create).toHaveBeenCalledWith({
+      data: {
+        history: { create: { actorUserId: 'buyer-id', status: 'pending' } },
+        orderId: 'order-id',
+        status: 'pending',
+        vendorId: 'vendor-id',
+      },
     });
   });
 
