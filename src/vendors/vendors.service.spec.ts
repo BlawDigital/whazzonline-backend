@@ -39,6 +39,25 @@ describe('VendorsService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('stores an initial promo in the same product write', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({ id: 'profile-id', setupCompleted: true });
+    await service.createProduct('vendor-id', {
+      category: 'Watches', name: 'Watch', unitPrice: 10000, quantity: 3, variants: [],
+      promoPrice: 8000, promoDurationHours: 72,
+    } as never, ['/uploads/products/watch.png']);
+    expect(prisma.product.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      promoPrice: 8000, promoStartsAt: expect.any(Date), promoEndsAt: expect.any(Date),
+    }) });
+    const write = prisma.product.create.mock.calls[0][0].data;
+    expect(write.promoEndsAt.getTime() - write.promoStartsAt.getTime()).toBe(72 * 3600000);
+  });
+
+  it('rejects a non-discount promo before writing the product', async () => {
+    await expect(service.createProduct('vendor-id', { unitPrice: 100, promoPrice: 100 } as never, [])).rejects.toThrow('lower');
+    expect(prisma.product.create).not.toHaveBeenCalled();
+  });
+
   it('rejects buyer accounts from vendor setup', async () => {
     prisma.user.findUnique.mockResolvedValue({ role: 'CUSTOMER' });
 
