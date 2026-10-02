@@ -1,3 +1,4 @@
+import { SellerNotificationsModule } from './seller-notifications/seller-notifications.module';
 import { Module } from '@nestjs/common';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
@@ -28,6 +29,7 @@ import { SupportModule } from './support/support.module';
     MessagingModule,
     IneterestsModule,
     SupportModule,
+    SellerNotificationsModule,
   ],
 })
 export class AppModule {}

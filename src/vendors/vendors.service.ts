@@ -736,6 +736,10 @@ export class VendorsService {
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
+    if (dto.featuredProductId) {
+      const product = await this.prisma.product.findFirst({ where: { id: dto.featuredProductId, vendorProfileId: profile.id, status: 'ACTIVE' } });
+      if (!product) throw new BadRequestException('Choose an active product from your own store.');
+    }
     return this.prisma.vendorProfile.update({ where: { userId }, data: dto });
   }
 

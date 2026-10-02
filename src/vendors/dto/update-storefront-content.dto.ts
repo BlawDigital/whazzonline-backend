@@ -1,6 +1,7 @@
-import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateStorefrontContentDto {
+  @IsOptional() @IsUUID() featuredProductId?: string | null;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(100) category?: string;
   @IsOptional() @IsString() @MaxLength(100) subCategory?: string;
   @IsOptional()

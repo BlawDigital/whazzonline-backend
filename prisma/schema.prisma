@@ -73,6 +73,8 @@ model User {
   isActive      Boolean @default(true)
   emailVerified Boolean @default(false)
 
+  notificationReads SellerNotificationRead[]
+  notificationSettings SellerNotificationSettings?
   vendorProfile      VendorProfile?
   wallet             Wallet?
   referrals          Referral[]          @relation("Referrer")
@@ -231,6 +233,8 @@ model VendorProfile {
   submittedAt       DateTime?
   reviewStatus      VendorReviewStatus @default(DRAFT)
   setupCompleted    Boolean            @default(false)
+
+  featuredProductId String?
 
   products      Product[]
   categories    VendorCategory[]
@@ -651,4 +655,20 @@ model ReturnRequestItem {
 
   @@index([returnRequestId])
   @@index([orderItemId])
+}
+
+model SellerNotificationRead {
+  userId String
+  key String
+  readAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([userId, key])
+}
+model SellerNotificationSettings {
+  userId String @id
+  orders Boolean @default(true)
+  priceSuggestions Boolean @default(true)
+  inventoryAlerts Boolean @default(true)
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

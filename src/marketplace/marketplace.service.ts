@@ -54,6 +54,7 @@ export class MarketplaceService {
         orderBy: { createdAt: 'desc' },
         select: {
           address: true,
+          featuredProductId: true,
           bannerUrl: true,
           category: true,
           reviewStatus: true,
@@ -146,6 +147,7 @@ export class MarketplaceService {
         };
       }),
       vendors: vendors.map((vendor) => ({
+        featuredProductId: products.some(p => p.id === vendor.featuredProductId) ? vendor.featuredProductId : null,
         category: vendor.category,
         verified: vendor.reviewStatus === 'APPROVED',
         coverUri: vendor.bannerUrl ?? '',
