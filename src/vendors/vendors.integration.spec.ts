@@ -2,7 +2,7 @@ import { Test } from '@nestjs/testing';
 import { ValidationPipe } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
-import { resolve } from 'node:path';
+
 import { AppModule } from '../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OTP_PROVIDER } from '../auth/otp/otp.provider';
@@ -25,7 +25,7 @@ const isolated =
     let productId: string;
 
     const image = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jk1sAAAAASUVORK5CYII=',
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l1sAAAAASUVORK5CYII=',
       'base64',
     );
     beforeAll(async () => {
@@ -47,9 +47,6 @@ const isolated =
           forbidNonWhitelisted: true,
         }),
       );
-      app.useStaticAssets(resolve(process.env.UPLOAD_DIR ?? 'uploads'), {
-        prefix: '/uploads/',
-      });
       await app.init();
       prisma = module.get(PrismaService);
     }, 60000);
@@ -176,7 +173,8 @@ const isolated =
         promoPrice: 110000,
         specifications: { Style: 'Classic' },
       });
-      await request(app.getHttpServer()).get(product.imageUrls[0]).expect(200);
+      expect(product.imageUrls[0]).toMatch(/^https:\/\/res\.cloudinary\.com\//);
+      expect((await fetch(product.imageUrls[0])).ok).toBe(true);
       const publicStore = await request(app.getHttpServer())
         .get(`/vendors/${userId}/storefront`)
         .expect(200);

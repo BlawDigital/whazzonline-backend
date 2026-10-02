@@ -1,3 +1,4 @@
+import { removeCloudinaryUrl } from '../storage/cloudinary-storage';
 import {
   BadRequestException,
   Body,
@@ -67,7 +68,12 @@ export class MessagingController {
     @Param('conversationId') conversationId: string,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    await this.messaging.assertParticipant(request.user.sub, conversationId);
+    try {
+      await this.messaging.assertParticipant(request.user.sub, conversationId);
+    } catch (error) {
+      if (file) await removeCloudinaryUrl(file.path);
+      throw error;
+    }
     if (!file) throw new BadRequestException('Choose an image to upload.');
     return { url: publicChatUploadUrl(file) };
   }

@@ -2,14 +2,9 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { resolve } from 'node:path';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
-
-  app.useStaticAssets(resolve(process.env.UPLOAD_DIR ?? 'uploads'), {
-    prefix: '/uploads/',
-  });
 
   const allowedOrigins = [
     'http://localhost:5173',
@@ -30,7 +25,7 @@ async function bootstrap() {
     }),
   );
   console.log('JWT_SECRET loaded:', !!process.env.JWT_SECRET);
-  await app.listen(process.env.PORT ?? 3000, "0.0.0.0",);
+  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
 
 bootstrap();

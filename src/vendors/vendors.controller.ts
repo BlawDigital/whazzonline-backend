@@ -55,7 +55,10 @@ export class VendorsController {
 
   @Get(':userId/profile')
   @UseGuards(JwtAuthGuard)
-  findProfile(@Req() request: AuthenticatedRequest, @Param('userId') userId: string) {
+  findProfile(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
     this.requireOwner(request, userId);
     return this.vendorsService.findProfile(userId);
   }
@@ -106,7 +109,7 @@ export class VendorsController {
     @UploadedFiles() files: Express.Multer.File[],
   ) {
     if (request.user.sub !== userId) {
-      removeProductUploads(files ?? []);
+      await removeProductUploads(files ?? []);
       throw new ForbiddenException('You can only manage your own products.');
     }
     const images = files ?? [];
@@ -121,7 +124,7 @@ export class VendorsController {
         images.map(publicProductUploadUrl),
       );
     } catch (error) {
-      removeProductUploads(images);
+      await removeProductUploads(images);
       throw error;
     }
   }
@@ -189,9 +192,13 @@ export class VendorsController {
 
   @Post(':userId/products/:productId/activate')
   @UseGuards(JwtAuthGuard)
-  activateProduct(@Req() request: AuthenticatedRequest,@Param('userId') userId: string,@Param('productId') productId: string) {
+  activateProduct(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Param('productId') productId: string,
+  ) {
     this.requireOwner(request, userId);
-    return this.vendorsService.activateProduct(userId,productId);
+    return this.vendorsService.activateProduct(userId, productId);
   }
 
   @Delete(':userId/products/:productId')
@@ -271,8 +278,10 @@ export class VendorsController {
     @UploadedFiles() files: IdentityFiles,
   ) {
     if (request.user.sub !== userId) {
-      removeUploadedFiles(Object.values(files ?? {}).flat());
-      throw new ForbiddenException('You can only manage your own store identity.');
+      await removeUploadedFiles(Object.values(files ?? {}).flat());
+      throw new ForbiddenException(
+        'You can only manage your own store identity.',
+      );
     }
     const logo = files?.logo?.[0];
     const banner = files?.banner?.[0];
@@ -291,14 +300,18 @@ export class VendorsController {
         logoUrl: logo ? publicVendorUploadUrl(logo) : undefined,
       });
     } catch (error) {
-      removeUploadedFiles(uploaded);
+      await removeUploadedFiles(uploaded);
       throw error;
     }
   }
 
   @Put(':userId/bank')
   @UseGuards(JwtAuthGuard)
-  saveBank(@Req() request: AuthenticatedRequest, @Param('userId') userId: string, @Body() dto: SaveVendorBankDto) {
+  saveBank(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Body() dto: SaveVendorBankDto,
+  ) {
     this.requireOwner(request, userId);
     return this.vendorsService.saveBank(userId, dto);
   }
@@ -316,7 +329,9 @@ export class VendorsController {
 
   private requireOwner(request: AuthenticatedRequest, userId: string) {
     if (request.user.sub !== userId) {
-      throw new ForbiddenException('You can only access your own store account.');
+      throw new ForbiddenException(
+        'You can only access your own store account.',
+      );
     }
   }
 }
