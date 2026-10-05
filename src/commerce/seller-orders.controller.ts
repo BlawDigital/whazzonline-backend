@@ -1,3 +1,4 @@
+import { removeCloudinaryUrl } from '../storage/cloudinary-storage';
 import {
   Body,
   Controller,
@@ -34,9 +35,6 @@ export class SellerOrdersController {
   }
   @Get('orders') list(@Req() req: AuthenticatedRequest) {
     return this.orders.list(req.user.sub);
-  }
-  @Get('notifications') notifications(@Req() req: AuthenticatedRequest) {
-    return this.orders.notifications(req.user.sub);
   }
   @Get('orders/:id') detail(
     @Req() req: AuthenticatedRequest,
@@ -85,18 +83,23 @@ export class SellerOrdersController {
   }
   @Post('orders/:id/disputes')
   @UseInterceptors(FilesInterceptor('evidence', 5, disputeUploadOptions))
-  dispute(
+  async dispute(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: CreateSellerDisputeDto,
     @UploadedFiles() files: Express.Multer.File[] = [],
   ) {
-    return this.orders.createDispute(
-      req.user.sub,
-      id,
-      dto.reason,
-      dto.description,
-      files.map(publicDisputeUrl),
-    );
+    try {
+      return await this.orders.createDispute(
+        req.user.sub,
+        id,
+        dto.reason,
+        dto.description,
+        files.map(publicDisputeUrl),
+      );
+    } catch (error) {
+      await Promise.all(files.map((file) => removeCloudinaryUrl(file.path)));
+      throw error;
+    }
   }
 }

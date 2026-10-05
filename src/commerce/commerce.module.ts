@@ -7,6 +7,7 @@ import { SellerOrdersService } from './seller-orders.service';
 import { DeliveryProvider, MockDeliveryProvider } from './delivery.provider';
 
 @Module({
+  exports: [SellerOrdersService],
   controllers: [CommerceController, SellerOrdersController],
   providers: [
     CommerceService,

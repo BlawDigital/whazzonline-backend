@@ -9,11 +9,16 @@ import {
   Post,
   UploadedFile,
   UseInterceptors,
+  UseGuards,
+  Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import {
   publicUserUploadUrl,
   removeUploadedFile,
@@ -44,22 +49,28 @@ export class UsersController {
     return this.userService.updateUser(id, updateUserDto);
   }
   @Post(':id/avatar')
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('avatar', userUploadOptions))
   async uploadAvatar(
+    @Req() request: AuthenticatedRequest,
     @Param('id') id: string,
     @UploadedFile() file?: Express.Multer.File,
   ) {
     if (!file)
       throw new BadRequestException('Select a profile image to upload.');
     try {
+      if (request.user.sub !== id)
+        throw new ForbiddenException(
+          'You can only change your own profile image.',
+        );
       const result = await this.userService.saveAvatar(
         id,
         publicUserUploadUrl(file),
       );
-      removeUserUploadUrl(result.previousAvatarUrl);
+      await removeUserUploadUrl(result.previousAvatarUrl);
       return result.user;
     } catch (error) {
-      removeUploadedFile(file);
+      await removeUploadedFile(file);
       throw error;
     }
   }

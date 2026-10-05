@@ -294,6 +294,11 @@ export class VendorsService {
       })),
       profile: {
         ...store,
+        bankAccountName: undefined,
+        bankAccountNumber: undefined,
+        bankCode: undefined,
+        bankName: undefined,
+        cacUrl: undefined,
         avatarUrl: user.avatarUrl,
         trustReviewCount: _count.trustReviews,
         trustReviews: trustReviews.map((review) => ({
@@ -376,6 +381,16 @@ export class VendorsService {
     dto: CreateVendorProductDto,
     imageUrls: string[],
   ) {
+    if (dto.promoPrice !== undefined && dto.promoPrice >= dto.unitPrice) {
+      throw new BadRequestException(
+        'Promo price must be lower than the actual price.',
+      );
+    }
+    if (dto.promoDurationHours !== undefined && dto.promoPrice === undefined) {
+      throw new BadRequestException(
+        'Add a promo price before choosing a duration.',
+      );
+    }
     await this.requireVendorUser(userId);
     const profile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
@@ -438,6 +453,15 @@ export class VendorsService {
         specifications: dto.specifications,
         subCategories: dto.subCategories,
         unitPrice: dto.unitPrice,
+        ...(dto.promoPrice !== undefined
+          ? {
+              promoPrice: dto.promoPrice,
+              promoStartsAt: new Date(),
+              promoEndsAt: new Date(
+                Date.now() + (dto.promoDurationHours ?? 24) * 3600000,
+              ),
+            }
+          : {}),
         variants: normalizedVariants,
         vendorProfileId: profile.id,
       },
@@ -665,8 +689,59 @@ export class VendorsService {
     productId: string,
     dto: UpdateVendorProductDto,
   ) {
-    await this.requireOwnedProduct(userId, productId);
-    return this.prisma.product.update({ where: { id: productId }, data: dto });
+    const product = await this.requireOwnedProduct(userId, productId);
+    if (product.status === 'DELETED')
+      throw new BadRequestException('Deleted products cannot be edited.');
+    if (
+      dto.unitPrice !== undefined &&
+      product.promoPrice &&
+      product.promoEndsAt &&
+      product.promoEndsAt > new Date() &&
+      dto.unitPrice <= product.promoPrice
+    )
+      throw new BadRequestException(
+        'Actual price must be higher than the active promo price.',
+      );
+    const variants = dto.variants?.map((v) => {
+      if (!v.type?.trim() && !v.color?.trim() && !v.size?.trim())
+        throw new BadRequestException(
+          'Each variant needs a name, color, or size.',
+        );
+      if (v.imageIndexes.some((index) => index >= product.imageUrls.length))
+        throw new BadRequestException('Variant image is unavailable.');
+      return {
+        type: v.type,
+        color: v.color,
+        size: v.size,
+        quantity: v.quantity,
+        imageIndexes: v.imageIndexes,
+      };
+    });
+    const stockVariants =
+      variants ?? (Array.isArray(product.variants) ? product.variants : []);
+    let allocated = 0;
+    for (const v of stockVariants)
+      if (
+        v &&
+        typeof v === 'object' &&
+        'quantity' in v &&
+        typeof v.quantity === 'number'
+      )
+        allocated += v.quantity;
+    if (allocated > (dto.quantity ?? product.quantity))
+      throw new BadRequestException(
+        'Variant quantities cannot exceed total stock.',
+      );
+    const fields = {
+      name: dto.name,
+      description: dto.description,
+      unitPrice: dto.unitPrice,
+      quantity: dto.quantity,
+    };
+    return this.prisma.product.update({
+      where: { id: productId },
+      data: { ...fields, ...(variants ? { variants } : {}) },
+    });
   }
 
   async archiveProduct(userId: string, productId: string) {
@@ -674,6 +749,23 @@ export class VendorsService {
     return this.prisma.product.update({
       where: { id: productId },
       data: { status: 'ARCHIVED' },
+    });
+  }
+
+  async activateProduct(userId: string, productId: string) {
+    const product = await this.requireOwnedProduct(userId, productId);
+    if (product.status !== 'ARCHIVED')
+      throw new BadRequestException('Only archived products can be restored.');
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+    });
+    if (!profile?.setupCompleted)
+      throw new BadRequestException(
+        'Complete store setup before restoring a product.',
+      );
+    return this.prisma.product.update({
+      where: { id: productId },
+      data: { status: 'ACTIVE' },
     });
   }
 
@@ -720,6 +812,19 @@ export class VendorsService {
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
+    if (dto.featuredProductId) {
+      const product = await this.prisma.product.findFirst({
+        where: {
+          id: dto.featuredProductId,
+          vendorProfileId: profile.id,
+          status: 'ACTIVE',
+        },
+      });
+      if (!product)
+        throw new BadRequestException(
+          'Choose an active product from your own store.',
+        );
+    }
     return this.prisma.vendorProfile.update({ where: { userId }, data: dto });
   }
 
@@ -764,13 +869,13 @@ export class VendorsService {
     });
 
     if (uploads.logoUrl && existing.logoUrl !== uploads.logoUrl) {
-      removeVendorUploadUrl(existing.logoUrl);
+      await removeVendorUploadUrl(existing.logoUrl);
     }
     if (uploads.bannerUrl && existing.bannerUrl !== uploads.bannerUrl) {
-      removeVendorUploadUrl(existing.bannerUrl);
+      await removeVendorUploadUrl(existing.bannerUrl);
     }
     if (uploads.cacUrl && existing.cacUrl !== uploads.cacUrl) {
-      removeVendorUploadUrl(existing.cacUrl);
+      await removeVendorUploadUrl(existing.cacUrl);
     }
 
     return updated;
@@ -810,7 +915,6 @@ export class VendorsService {
 
     const identityComplete = Boolean(
       existing.logoUrl &&
-      existing.bannerUrl &&
       (user.registrationType !== 'BUSINESS' || existing.cacUrl),
     );
     const bankComplete = Boolean(

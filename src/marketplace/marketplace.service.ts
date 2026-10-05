@@ -54,8 +54,10 @@ export class MarketplaceService {
         orderBy: { createdAt: 'desc' },
         select: {
           address: true,
+          featuredProductId: true,
           bannerUrl: true,
           category: true,
+          reviewStatus: true,
           city: true,
           description: true,
           logoUrl: true,
@@ -85,6 +87,19 @@ export class MarketplaceService {
       }),
     ]);
 
+    const sales = products.length
+      ? await this.prisma.commerceOrderItem.groupBy({
+          by: ['productId'],
+          where: {
+            productId: { in: products.map((product) => product.id) },
+            order: { status: 'delivered' },
+          },
+          _sum: { quantity: true },
+        })
+      : [];
+    const salesByProduct = new Map(
+      sales.map((sale) => [sale.productId, sale._sum.quantity ?? 0]),
+    );
     const now = new Date();
     return {
       categories,
@@ -99,9 +114,11 @@ export class MarketplaceService {
         );
         return {
           category: categoryFor(product.category),
+          storeCategory: product.category,
           dateListed: dateListed(product.createdAt),
           id: product.id,
           likeCount: product._count?.likes ?? 0,
+          salesCount: salesByProduct.get(product.id) ?? 0,
           imageUri: product.imageUrls[0] ?? '',
           imageUris: product.imageUrls,
           location: `${product.vendorProfile.city}, ${product.vendorProfile.state}`,
@@ -130,7 +147,9 @@ export class MarketplaceService {
         };
       }),
       vendors: vendors.map((vendor) => ({
+        featuredProductId: products.some(p => p.id === vendor.featuredProductId) ? vendor.featuredProductId : null,
         category: vendor.category,
+        verified: vendor.reviewStatus === 'APPROVED',
         coverUri: vendor.bannerUrl ?? '',
         description: vendor.description,
         id: vendor.userId,

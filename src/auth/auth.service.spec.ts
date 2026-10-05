@@ -33,6 +33,11 @@ describe('AuthService contact credentials', () => {
     jwtService.signAsync.mockResolvedValue('signed-access-token');
   });
 
+  it('rejects seller email registration before querying credentials', async () => {
+    await expect(service.register({ email: 'seller@example.com', password: 'example-password', registrationType: 'SELLER' } as never)).rejects.toThrow('Sellers must sign up');
+    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+  });
+
   it('issues a token when phone verification restores an existing user', async () => {
     otpService.verifyPhoneOtp.mockResolvedValue({
       message: 'Phone number verified successfully.',

@@ -3,6 +3,7 @@ import {
   IsArray,
   ArrayMaxSize,
   IsInt,
+  IsIn,
   IsNotEmpty,
   IsObject,
   IsOptional,
@@ -41,6 +42,17 @@ export class VendorProductVariantDto {
 }
 
 export class CreateVendorProductDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  promoPrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsIn([24, 72])
+  promoDurationHours?: 24 | 72;
+
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)

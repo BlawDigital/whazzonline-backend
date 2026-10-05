@@ -1,7 +1,11 @@
 import { BadRequestException } from '@nestjs/common';
 import { memoryStorage } from 'multer';
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
+import {
+  cloudinaryClient,
+  uploadCloudinary,
+} from '../storage/cloudinary-storage';
 import { basename, join, resolve } from 'node:path';
 
 export type SupportAttachment = {
@@ -9,6 +13,11 @@ export type SupportAttachment = {
   name: string;
   mimeType: string;
   size: number;
+  cloudinary?: {
+    publicId: string;
+    resourceType: 'image' | 'raw';
+    format: string;
+  };
 };
 const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
 
@@ -61,7 +70,15 @@ function validSignature(file: Express.Multer.File) {
 export async function removeSupportAttachments(files: SupportAttachment[]) {
   await Promise.all(
     files.map((file) =>
-      unlink(join(supportUploadRoot(), file.id)).catch(() => undefined),
+      file.cloudinary
+        ? cloudinaryClient()
+            .uploader.destroy(file.cloudinary.publicId, {
+              resource_type: file.cloudinary.resourceType,
+              type: 'authenticated',
+              invalidate: true,
+            })
+            .catch(() => undefined)
+        : unlink(join(supportUploadRoot(), file.id)).catch(() => undefined),
     ),
   );
 }
@@ -79,23 +96,36 @@ export async function saveSupportAttachments(
   }
   const saved: SupportAttachment[] = [];
   if (!files.length) return saved;
-  await mkdir(supportUploadRoot(), { recursive: true });
   try {
     for (const file of files) {
-      const attachment = {
+      const attachment: SupportAttachment = {
         id: randomUUID(),
         name:
           basename(file.originalname)
-            .replace(/[\x00-\x1f\x7f]/g, '')
+            .split('')
+            .filter(
+              (character) =>
+                character.charCodeAt(0) >= 32 &&
+                character.charCodeAt(0) !== 127,
+            )
+            .join('')
             .slice(0, 160) || 'Attachment',
         mimeType: file.mimetype,
         size: file.buffer.length,
       };
+      const result = await uploadCloudinary(
+        file.buffer,
+        file.mimetype,
+        'support',
+        true,
+        attachment.id,
+      );
+      attachment.cloudinary = {
+        publicId: result.public_id,
+        resourceType: result.resource_type as 'image' | 'raw',
+        format: result.format ?? '',
+      };
       saved.push(attachment);
-      await writeFile(join(supportUploadRoot(), attachment.id), file.buffer, {
-        flag: 'wx',
-        mode: 0o600,
-      });
     }
     return saved;
   } catch (error) {
@@ -106,18 +136,50 @@ export async function saveSupportAttachments(
 
 export function parseSupportAttachments(value: unknown): SupportAttachment[] {
   if (!Array.isArray(value)) return [];
-  return value.filter(
-    (item): item is SupportAttachment =>
-      !!item &&
-      typeof item === 'object' &&
-      typeof item.id === 'string' &&
-      /^[0-9a-f-]{36}$/i.test(item.id) &&
-      typeof item.name === 'string' &&
-      typeof item.mimeType === 'string' &&
-      allowed.includes(item.mimeType) &&
-      typeof item.size === 'number',
-  );
+  return value.filter((item: unknown): item is SupportAttachment => {
+    if (!item || typeof item !== 'object') return false;
+    const entry = item as Record<string, unknown>;
+    if (
+      typeof entry.id !== 'string' ||
+      !/^[0-9a-f-]{36}$/i.test(entry.id) ||
+      typeof entry.name !== 'string' ||
+      typeof entry.mimeType !== 'string' ||
+      !allowed.includes(entry.mimeType) ||
+      typeof entry.size !== 'number'
+    )
+      return false;
+    if (entry.cloudinary !== undefined) {
+      if (!entry.cloudinary || typeof entry.cloudinary !== 'object')
+        return false;
+      const cloud = entry.cloudinary as Record<string, unknown>;
+      if (
+        typeof cloud.publicId !== 'string' ||
+        !/^whazzonline\/support\/[0-9a-f-]{36}(?:\.pdf)?$/i.test(
+          cloud.publicId,
+        ) ||
+        !['image', 'raw'].includes(String(cloud.resourceType)) ||
+        typeof cloud.format !== 'string'
+      )
+        return false;
+    }
+    return true;
+  });
 }
 
-export const readSupportAttachment = (file: SupportAttachment) =>
-  readFile(join(supportUploadRoot(), file.id));
+export async function readSupportAttachment(file: SupportAttachment) {
+  // Existing private files remain readable until the transfer script is run.
+  if (!file.cloudinary) return readFile(join(supportUploadRoot(), file.id));
+  const url = cloudinaryClient().utils.private_download_url(
+    file.cloudinary.publicId,
+    file.cloudinary.format,
+    {
+      resource_type: file.cloudinary.resourceType,
+      type: 'authenticated',
+      expires_at: Math.floor(Date.now() / 1000) + 60,
+    },
+  );
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!response.ok)
+    throw new BadRequestException('Unable to download this attachment.');
+  return Buffer.from(await response.arrayBuffer());
+}
