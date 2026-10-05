@@ -36,6 +36,8 @@ export class SellerNotificationsController {
   ) {
     return this.service.saveSettings(req.user.sub, dto);
   }
+
+  //Adjustment to push 
   @Patch('read') read(
     @Req() req: AuthenticatedRequest,
     @Body() dto: ReadNotificationsDto,
