@@ -19,10 +19,11 @@ export class OtpService {
     @Inject(OTP_PROVIDER) private readonly otpProvider: OtpProvider,
     @Inject(EMAIL_OTP_PROVIDER)
     private readonly emailOtpProvider: EmailOtpProvider,
-  ) {}
+  ) { }
 
   async sendPhoneOtp(phone: string, purpose: PhoneOtpPurpose = 'REGISTRATION') {
     const normalizedPhone = normalizePhone(phone);
+
     const existingOtp = await this.prisma.phoneOtp.findFirst({
       where: {
         phone: normalizedPhone,
@@ -36,34 +37,23 @@ export class OtpService {
         createdAt: 'desc',
       },
     });
+
     if (existingOtp) {
-      throw new BadRequestException(
-        'A verification code has already been sent. Please wait before requesting another.',
-      );
+      throw new BadRequestException('A verification code has already beem sent. Please wait before requesting another.',);
     }
-    //Generate six-digit otp
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    const codeHash = await bcrypt.hash(otp, 10);
-
-    const expiresAt = new Date(
-      Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000,
-    );
+    const { pinId } = await this.otpProvider.sendOtp(normalizedPhone);
+    const expiresAt = new Date(Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000,);
 
     await this.prisma.phoneOtp.create({
       data: {
         phone: normalizedPhone,
-        codeHash,
+        pinId,
         expiresAt,
         attempts: 0,
         verified: false,
         purpose,
       },
     });
-
-    await this.otpProvider.sendOtp(normalizedPhone, otp);
-
     return {
       message: 'Verification code sent.',
       expiresIn: this.OTP_EXPIRY_MINUTES * 60,
@@ -101,7 +91,11 @@ export class OtpService {
         'Too many incorrect attempts. Please request a new code.',
       );
     }
-    const isValid = await bcrypt.compare(code, otpRecord.codeHash);
+    if (!otpRecord.pinId) {
+      throw new BadRequestException('This verification code is invalid. Please request a new code');
+    }
+    const isValid = await this.otpProvider.verifyOtp(otpRecord.pinId, code);
+
     if (!isValid) {
       await this.prisma.phoneOtp.update({
         where: {

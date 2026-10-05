@@ -168,7 +168,8 @@ model Referral {
 model PhoneOtp {
   id         String          @id @default(cuid())
   phone      String
-  codeHash   String
+  pinId      String?
+  codeHash   String?
   expiresAt  DateTime
   attempts   Int             @default(0)
   verified   Boolean         @default(false)

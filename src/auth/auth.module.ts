@@ -9,6 +9,7 @@ import { OTP_PROVIDER } from './otp/otp.provider';
 import { EMAIL_OTP_PROVIDER } from './otp/email-otp.provider';
 import { MockEmailOtpProvider } from './otp/mock-email-otp.provider';
 import { ResendEmailOtpProvider } from './otp/resend-email-otp.provider';
+import { TermiiOtpProvider } from './otp/termii-otp.provider';
 
 @Module({
   imports: [
@@ -38,11 +39,11 @@ import { ResendEmailOtpProvider } from './otp/resend-email-otp.provider';
   providers: [
     AuthService,
     OtpService,
-    MockOtpProvider,
+    TermiiOtpProvider,
     MockEmailOtpProvider,
     {
       provide: OTP_PROVIDER,
-      useExisting: MockOtpProvider,
+      useExisting: TermiiOtpProvider,
     },
     {
       provide: EMAIL_OTP_PROVIDER,

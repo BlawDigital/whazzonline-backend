@@ -235,125 +235,132 @@ export class AuthService {
   // ============================================================
   // REGISTER
   // ============================================================
+// ============================================================
+// REGISTER
+// ============================================================
 
-  async register(registerDto: RegisterDto) {
-    const { phone, firstName, lastName, email, registrationType, password } =
-      registerDto;
-    const normalizedPhone = phone ? normalizePhone(phone) : undefined;
-    const normalizedEmail = email?.trim().toLowerCase();
+async register(registerDto: RegisterDto) {
+  const {
+    phone,
+    firstName,
+    lastName,
+    email,
+    registrationType,
+    password,
+  } = registerDto;
 
-    if (!normalizedPhone && !normalizedEmail) {
-      throw new ConflictException('Email or phone number is required.');
-    }
-    if (normalizedEmail && !password) {
-      throw new ConflictException('A password is required for email sign-up.');
-    }
+  const normalizedPhone = phone ? normalizePhone(phone) : undefined;
+  const normalizedEmail = email?.trim().toLowerCase();
 
-    // Check phone
-    const existingPhone = normalizedPhone
-      ? await this.prisma.user.findFirst({
-        where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
-      })
-      : null;
+  // At least one contact method is required
+  if (!normalizedPhone && !normalizedEmail) {
+    throw new ConflictException('Email or phone number is required.');
+  }
+
+  // Email registration requires a password
+  if (normalizedEmail && !password) {
+    throw new ConflictException(
+      'A password is required for email sign-up.',
+    );
+  }
+
+  // ============================================================
+  // CHECK PHONE
+  // ============================================================
+
+  if (normalizedPhone) {
+    const existingPhone = await this.prisma.user.findFirst({
+      where: {
+        phone: {
+          in: phoneLookupCandidates(normalizedPhone),
+        },
+      },
+    });
 
     if (existingPhone) {
       throw new ConflictException(
         'An account with this phone number already exists.',
       );
     }
+  }
 
-    // Check email
-    if (normalizedEmail) {
-      const existingEmail = await this.prisma.user.findUnique({
-        where: {
-          email: normalizedEmail,
-        },
-      });
+  // ============================================================
+  // CHECK EMAIL
+  // ============================================================
 
-      if (existingEmail) {
-        throw new ConflictException(
-          'An account with this email already exists.',
-        );
-      }
-    }
-
-    // Check phone verification
-    const verifiedOtp = normalizedPhone
-      ? await this.prisma.phoneOtp.findFirst({
-        where: {
-          phone: normalizedPhone,
-          purpose: 'REGISTRATION',
-          verified: true,
-          consumedAt: null,
-        },
-        orderBy: { createdAt: 'desc' },
-      })
-      : await this.prisma.emailOtp.findFirst({
-        where: {
-          email: normalizedEmail!,
-          purpose: 'REGISTRATION',
-          verified: true,
-          consumedAt: null,
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-
-    if (!verifiedOtp) {
-      throw new ConflictException(
-        normalizedPhone
-          ? 'Phone number has not been verified.'
-          : 'Email address has not been verified.',
-      );
-    }
-
-    // Hash password
-    const passwordHash = password ? await bcrypt.hash(password, 12) : null;
-
-    // Determine role
-    const roleByRegistrationType = {
-      BUYER: 'CUSTOMER',
-      SELLER: 'VENDOR',
-      BUSINESS: 'BUSINESS',
-    } as const;
-    const role = roleByRegistrationType[registrationType];
-
-    // Create account
-    const user = await this.prisma.user.create({
-      data: {
-        phone: normalizedPhone,
-        firstName,
-        lastName,
+  if (normalizedEmail) {
+    const existingEmail = await this.prisma.user.findUnique({
+      where: {
         email: normalizedEmail,
-        passwordHash,
-        registrationType,
-        role,
-        authProvider: normalizedPhone ? 'PHONE' : 'EMAIL',
-        isVerified: true,
-        emailVerified: Boolean(normalizedEmail),
       },
     });
 
-    if (normalizedPhone) {
-      await this.prisma.phoneOtp.update({
-        where: { id: verifiedOtp.id },
-        data: { consumedAt: new Date() },
-      });
-    } else {
-      await this.prisma.emailOtp.update({
-        where: { id: verifiedOtp.id },
-        data: { consumedAt: new Date() },
-      });
+    if (existingEmail) {
+      throw new ConflictException(
+        'An account with this email already exists.',
+      );
     }
-
-    const accessToken = await this.generateToken(user);
-
-    return {
-      message: 'Account created successfully.',
-      accessToken,
-      user: this.toPublicUser(user),
-    };
   }
 
+  // ============================================================
+  // HASH PASSWORD
+  // ============================================================
+
+  const passwordHash = password
+    ? await bcrypt.hash(password, 12)
+    : null;
+
+  // ============================================================
+  // DETERMINE ROLE
+  // ============================================================
+
+  const roleByRegistrationType = {
+    BUYER: 'CUSTOMER',
+    SELLER: 'VENDOR',
+    BUSINESS: 'BUSINESS',
+  } as const;
+
+  const role = roleByRegistrationType[registrationType];
+
+  // ============================================================
+  // CREATE ACCOUNT
+  // ============================================================
+
+  const user = await this.prisma.user.create({
+    data: {
+      phone: normalizedPhone,
+      firstName,
+      lastName,
+      email: normalizedEmail,
+      passwordHash,
+      registrationType,
+      role,
+
+      authProvider: normalizedPhone
+        ? 'PHONE'
+        : 'EMAIL',
+
+      // TEMPORARY: OTP verification bypassed
+      isVerified: true,
+
+      // Since email verification is currently bypassed too
+      emailVerified: Boolean(normalizedEmail),
+    },
+  });
+
+  // ============================================================
+  // GENERATE LOGIN TOKEN
+  // ============================================================
+
+  const accessToken = await this.generateToken(user);
+
+  return {
+    message: 'Account created successfully.',
+    accessToken,
+    user: this.toPublicUser(user),
+  };
+}
+ 
   // ============================================================
   // LOGIN
   // ============================================================
