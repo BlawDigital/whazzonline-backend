@@ -13,6 +13,7 @@ import {
 } from './merchant.dto';
 import { uploadMerchantMedia } from './merchant-media';
 import { cloudinaryClient } from '../storage/cloudinary-storage';
+import { orderNotificationSelect, orderNotices, supportReplyNotice, supportReplySelect } from '../commerce/order-notifications';
 
 @Injectable()
 export class MerchantService {
@@ -234,10 +235,10 @@ export class MerchantService {
     });
   }
   async notifications(userId: string) {
-    const [orders, posts, reads] = await Promise.all([
+    const [orders, posts, reads, supportReplies] = await Promise.all([
       this.prisma.commerceOrder.findMany({
         where: { OR: [{ userId }, { items: { some: { vendorId: userId } } }] },
-        select: { id: true, status: true, updatedAt: true, userId: true },
+        select: orderNotificationSelect,
         orderBy: { updatedAt: 'desc' },
         take: 100,
       }),
@@ -263,20 +264,15 @@ export class MerchantService {
         where: { userId },
         select: { key: true },
       }),
+      this.prisma.supportMessage.findMany({
+        where: { ticket: { ownerUserId: userId }, senderUserId: { not: userId } },
+        select: supportReplySelect, orderBy: { createdAt: 'desc' }, take: 100,
+      }),
     ]);
     const keys = new Set(reads.map((row) => row.key));
     const notices = [
-      ...orders.map((order) => ({
-        id: `merchant-order:${order.id}:${order.updatedAt.getTime()}`,
-        title:
-          order.userId === userId
-            ? 'Your order update'
-            : 'Merchant order update',
-        body: `Order ${order.id.slice(-8)} is ${order.status}.`,
-        createdAt: order.updatedAt.toISOString(),
-        orderId: order.id,
-        merchantId: undefined as string | undefined,
-      })),
+      ...orders.flatMap((order) => orderNotices(order, userId)),
+      ...supportReplies.map(supportReplyNotice),
       ...posts.map((post) => ({
         id: `merchant-content:${post.id}`,
         title: `${post.merchant.storeName} · ${post.kind === 'STORY' ? 'Story' : 'SCROLL'}`,
@@ -284,9 +280,10 @@ export class MerchantService {
         createdAt: post.createdAt.toISOString(),
         orderId: undefined as string | undefined,
         merchantId: post.merchant.userId,
+        read: false,
       })),
     ]
-      .map((notice) => ({ ...notice, read: keys.has(notice.id) }))
+      .map((notice) => ({ ...notice, read: notice.read || keys.has(notice.id) }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     return {
       notifications: notices,

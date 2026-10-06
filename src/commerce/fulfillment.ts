@@ -1,7 +1,10 @@
 import type { Prisma } from '../../generated/prisma/client';
+import { normalizeOrderStatus } from './order-status';
 
 export function aggregateStatus(statuses: string[]) {
-  const active = statuses.filter((status) => status !== 'rejected');
+  const active = statuses
+    .map(normalizeOrderStatus)
+    .filter((status) => status !== 'rejected');
   if (!active.length) return 'rejected';
   if (active.every((status) => status === 'delivered')) return 'delivered';
   if (active.some((status) => status === 'pending')) return 'confirmed';
