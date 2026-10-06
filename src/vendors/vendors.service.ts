@@ -240,9 +240,9 @@ export class VendorsService {
         products: {
           ...(manage ? {} : { where: { status: 'ACTIVE' as const } }),
           orderBy: { createdAt: 'desc' },
-          include: { _count: { select: { likes: true } } },
+          include: { aisle: { select: { name: true } }, _count: { select: { likes: true } } },
         },
-        user: { select: { avatarUrl: true } },
+        user: { select: { avatarUrl: true, registrationType: true, role: true } },
         trustReviews: {
           orderBy: { createdAt: 'desc' },
           select: {
@@ -303,6 +303,7 @@ export class VendorsService {
         bankName: undefined,
         cacUrl: undefined,
         avatarUrl: user.avatarUrl,
+        isBusiness: user.registrationType === 'BUSINESS' || user.role === 'BUSINESS',
         trustReviewCount: _count.trustReviews,
         trusteeCount: trustees.length,
         trustReviews: trustReviews.map((review) => ({
@@ -775,6 +776,7 @@ export class VendorsService {
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
+    if (dto.representativeName !== undefined && dto.representativeName.trim().length < 2) throw new BadRequestException('A named CEO or authorized representative is required.');
     if (dto.featuredProductId) {
       const product = await this.prisma.product.findFirst({
         where: {
@@ -788,7 +790,7 @@ export class VendorsService {
           'Choose an active product from your own store.',
         );
     }
-    return this.prisma.vendorProfile.update({ where: { userId }, data: dto });
+    return this.prisma.vendorProfile.update({ where: { userId }, data: { ...dto, socialLinks: dto.socialLinks?.map(link => ({ label: link.label.trim(), url: link.url })) } });
   }
 
   async saveProfile(userId: string, dto: SaveVendorProfileDto) {
@@ -893,10 +895,14 @@ export class VendorsService {
     }
 
     const submittedAt = new Date();
+    const representativeName = dto.representativeName?.trim() || '';
+    if (representativeName.length < 2) throw new BadRequestException('Add a named CEO or authorized representative in About before submitting.');
     return this.prisma.vendorProfile.update({
       where: { userId },
       data: {
         reviewStatus: 'PENDING',
+        representativeName,
+        representativeRole: dto.representativeRole,
         sellerType: dto.sellerType,
         setupCompleted: true,
         submittedAt,

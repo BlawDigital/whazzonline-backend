@@ -277,6 +277,8 @@ describe('VendorsService', () => {
       service.submitProfile('vendor-id', {
         sellerType: 'RETAILER',
         termsAccepted: true,
+      representativeName: "Ada Vendor",
+      representativeRole: "CEO",
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -303,11 +305,15 @@ describe('VendorsService', () => {
     await service.submitProfile('vendor-id', {
       sellerType: 'BOTH',
       termsAccepted: true,
+      representativeName: "Ada Vendor",
+      representativeRole: "CEO",
     });
 
     expect(prisma.vendorProfile.update).toHaveBeenCalledWith({
       data: {
         reviewStatus: 'PENDING',
+        representativeName: 'Ada Vendor',
+        representativeRole: 'CEO',
         sellerType: 'BOTH',
         setupCompleted: true,
         // Jest asymmetric matchers are intentionally typed as any.
@@ -340,6 +346,8 @@ describe('VendorsService', () => {
       service.submitProfile('vendor-id', {
         sellerType: 'RETAILER',
         termsAccepted: true,
+      representativeName: "Ada Vendor",
+      representativeRole: "CEO",
       }),
     ).resolves.toEqual({ setupCompleted: true });
   });
@@ -363,6 +371,8 @@ describe('VendorsService', () => {
       service.submitProfile('business-id', {
         sellerType: 'BOTH',
         termsAccepted: true,
+      representativeName: "Ada Vendor",
+      representativeRole: "CEO",
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -386,6 +396,8 @@ describe('VendorsService', () => {
       ],
       profile: {
         avatarUrl: '/uploads/users/avatar.png',
+        bankAccountName: undefined, bankAccountNumber: undefined, bankCode: undefined, bankName: undefined, cacUrl: undefined,
+        isBusiness: false,
         id: 'profile-id',
         storeName: 'Example Store',
         trustReviewCount: 0,

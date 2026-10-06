@@ -146,6 +146,8 @@ export class MessagingService {
       id: conversation.id,
       status: conversation.status.toLowerCase(),
       subject: conversation.subject ?? undefined,
+      productId: conversation.productId ?? undefined,
+      productName: conversation.productName ?? undefined,
       canManageStatus: seller,
       name: seller
         ? [conversation.buyer.firstName, conversation.buyer.lastName]
@@ -329,6 +331,8 @@ export class MessagingService {
           buyerUserId: userId,
           clientThreadId,
           subject: context?.name ?? 'Store enquiry',
+          productId: context?.productId,
+          productName: context?.name,
           vendorProfileId: vendor.id,
         },
         update: {},
@@ -347,6 +351,7 @@ export class MessagingService {
             buyerUserId: userId,
             vendorProfileId: vendor.id,
             status: { in: ['OPEN', 'PENDING'] },
+            productId: context?.productId ?? null,
           },
           include: conversationInclude,
           orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
@@ -355,6 +360,8 @@ export class MessagingService {
           data: {
             buyerUserId: userId,
             subject: context?.name ?? 'Store enquiry',
+            productId: context?.productId,
+            productName: context?.name,
             vendorProfileId: vendor.id,
           },
           include: conversationInclude,
