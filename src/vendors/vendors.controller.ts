@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   Get,
   Param,
+  Query,
   Post,
   Patch,
   Put,
@@ -21,7 +22,11 @@ import {
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
 import { CreateVendorWithdrawalDto } from './dto/create-vendor-withdrawal.dto';
-import { CreateVendorCategoryDto } from './dto/create-vendor-category.dto';
+import { StoreCommunityService } from './store-community.service';
+import {
+  StoreCommunityQueryDto,
+  ReviewVoteDto,
+} from './dto/store-community.dto';
 import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
@@ -51,7 +56,10 @@ type IdentityFiles = {
 
 @Controller('vendors')
 export class VendorsController {
-  constructor(private readonly vendorsService: VendorsService) {}
+  constructor(
+    private readonly vendorsService: VendorsService,
+    private readonly community: StoreCommunityService,
+  ) {}
 
   @Get(':userId/profile')
   @UseGuards(JwtAuthGuard)
@@ -66,6 +74,45 @@ export class VendorsController {
   @Get(':userId/storefront')
   findStorefront(@Param('userId') userId: string) {
     return this.vendorsService.findStorefront(userId);
+  }
+
+  @Get(':userId/manage-storefront')
+  @UseGuards(JwtAuthGuard)
+  manageStorefront(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
+    this.requireOwner(request, userId);
+    return this.vendorsService.findStorefront(userId, true);
+  }
+
+  @Get(':userId/reviews')
+  @UseGuards(JwtAuthGuard)
+  reviews(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Query() query: StoreCommunityQueryDto,
+  ) {
+    return this.community.reviews(userId, query, request.user.sub);
+  }
+
+  @Get(':userId/trustees')
+  trustees(
+    @Param('userId') userId: string,
+    @Query() query: StoreCommunityQueryDto,
+  ) {
+    return this.community.trustees(userId, query);
+  }
+
+  @Post(':userId/reviews/:reviewId/vote')
+  @UseGuards(JwtAuthGuard)
+  vote(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Param('reviewId') reviewId: string,
+    @Body() dto: ReviewVoteDto,
+  ) {
+    return this.community.vote(userId, reviewId, request.user.sub, dto.helpful);
   }
 
   @Get(':userId/products')
@@ -223,30 +270,6 @@ export class VendorsController {
     if (request.user.sub !== userId)
       throw new ForbiddenException('You can only manage your own storefront.');
     return this.vendorsService.updateStorefront(userId, dto);
-  }
-
-  @Post(':userId/categories')
-  @UseGuards(JwtAuthGuard)
-  createCategory(
-    @Req() request: AuthenticatedRequest,
-    @Param('userId') userId: string,
-    @Body() dto: CreateVendorCategoryDto,
-  ) {
-    if (request.user.sub !== userId)
-      throw new ForbiddenException('You can only manage your own categories.');
-    return this.vendorsService.createCategory(userId, dto);
-  }
-
-  @Delete(':userId/categories/:categoryId')
-  @UseGuards(JwtAuthGuard)
-  deleteCategory(
-    @Req() request: AuthenticatedRequest,
-    @Param('userId') userId: string,
-    @Param('categoryId') categoryId: string,
-  ) {
-    if (request.user.sub !== userId)
-      throw new ForbiddenException('You can only manage your own categories.');
-    return this.vendorsService.deleteCategory(userId, categoryId);
   }
 
   @Put(':userId/profile')

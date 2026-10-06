@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { JwtService } from '@nestjs/jwt';
 import { ValidationPipe } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
@@ -6,6 +7,40 @@ import request from 'supertest';
 import { AppModule } from '../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OTP_PROVIDER } from '../auth/otp/otp.provider';
+
+// The HTTP assertions below verify the required fields from these JSON responses.
+type TestPayload = {
+  id: string;
+  verified: boolean;
+  accessToken: string;
+  user: { id: string };
+  registrationType: string;
+  setupCompleted: boolean;
+  profile: {
+    userId: string;
+    storeName: string;
+    bankAccountNumber?: string;
+    about: string;
+  };
+  products: { id: string; salesCount: number }[];
+  categories: { name: string; productCount: number }[];
+  featuredProductId: string;
+  vendors: { id: string; featuredProductId: string }[];
+  total: number;
+  trustees: { id: string; reviewerName: string }[];
+  reviews: {
+    rating: number | null;
+    helpfulCount: number;
+    notHelpfulCount: number;
+    viewerVote: boolean | null;
+  }[];
+  notifications: { id: string; productId: string; read: boolean }[];
+  inventoryAlerts: boolean;
+  unreadCount: number;
+};
+function payload(response: { body: unknown }): TestPayload {
+  return response.body as TestPayload;
+}
 
 // This integration suite can only run against the explicitly isolated local database.
 const isolated =
@@ -32,9 +67,12 @@ const isolated =
       const module = await Test.createTestingModule({ imports: [AppModule] })
         .overrideProvider(OTP_PROVIDER)
         .useValue({
-          sendOtp: async (number: string, code: string) => {
-            codes.set(number, code);
+          sendOtp: (number: string) => {
+            codes.set(number, '123456');
+            return Promise.resolve({ pinId: 'isolated-verification-pin' });
           },
+          verifyOtp: (_pinId: string, code: string) =>
+            Promise.resolve(code === '123456'),
         })
         .compile();
       app = module.createNestApplication<NestExpressApplication>({
@@ -63,19 +101,19 @@ const isolated =
         .post('/auth/phone/verify-otp')
         .send({ phone, code: codes.get(phone) })
         .expect(201);
-      expect(verified.body.verified).toBe(true);
+      expect(payload(verified).verified).toBe(true);
       const registered = await request(app.getHttpServer())
         .post('/auth/register')
         .send({ phone, registrationType: 'SELLER' })
         .expect(201);
-      token = registered.body.accessToken;
-      userId = registered.body.user.id;
+      token = payload(registered).accessToken;
+      userId = payload(registered).user.id;
       expect(token).toBeTruthy();
       const me = await request(app.getHttpServer())
         .get('/auth/me')
         .auth(token, { type: 'bearer' })
         .expect(200);
-      expect(me.body.registrationType).toBe('SELLER');
+      expect(payload(me).registrationType).toBe('SELLER');
     });
     it('protects setup writes and persists profile, identity, bank and submission', async () => {
       const details = {
@@ -102,7 +140,7 @@ const isolated =
         .auth(token, { type: 'bearer' })
         .send(details)
         .expect(200);
-      expect(saved.body.id).toBeTruthy();
+      expect(payload(saved).id).toBeTruthy();
       await request(app.getHttpServer())
         .post(`/vendors/${userId}/submit`)
         .auth(token, { type: 'bearer' })
@@ -131,13 +169,13 @@ const isolated =
         .auth(token, { type: 'bearer' })
         .send({ sellerType: 'RETAILER', termsAccepted: true })
         .expect(201);
-      expect(submitted.body.setupCompleted).toBe(true);
+      expect(payload(submitted).setupCompleted).toBe(true);
       const restored = await request(app.getHttpServer())
         .get(`/vendors/${userId}/profile`)
         .auth(token, { type: 'bearer' })
         .expect(200);
-      expect(restored.body.storeName).toBe(details.storeName);
-      expect(restored.body.bankAccountNumber).toBe('0123456789');
+      expect(payload(restored).storeName).toBe(details.storeName);
+      expect(payload(restored).bankAccountNumber).toBe('0123456789');
     });
     it('publishes full multipart product data and proves persistence and public discovery', async () => {
       const response = await request(app.getHttpServer())
@@ -162,9 +200,9 @@ const isolated =
           contentType: 'image/png',
         })
         .expect(201);
-      productId = response.body.id;
+      productId = payload(response).id;
       const product = await prisma.product.findUniqueOrThrow({
-        where: { id: response.body.id },
+        where: { id: payload(response).id },
       });
       expect(product).toMatchObject({
         name: 'Verification wristwatch',
@@ -178,18 +216,18 @@ const isolated =
       const publicStore = await request(app.getHttpServer())
         .get(`/vendors/${userId}/storefront`)
         .expect(200);
-      expect(publicStore.body.profile.bankAccountNumber).toBeUndefined();
-      expect(publicStore.body.profile.cacUrl).toBeUndefined();
+      expect(payload(publicStore).profile.bankAccountNumber).toBeUndefined();
+      expect(payload(publicStore).profile.cacUrl).toBeUndefined();
       expect(
-        publicStore.body.products.some(
+        payload(publicStore).products.some(
           (item: { id: string }) => item.id === product.id,
         ),
       ).toBe(true);
       const marketplace = await request(app.getHttpServer())
         .get('/buyer/marketplace')
         .expect(200);
-      expect(JSON.stringify(marketplace.body)).toContain(product.id);
-      expect(JSON.stringify(marketplace.body)).toContain(userId);
+      expect(JSON.stringify(payload(marketplace))).toContain(product.id);
+      expect(JSON.stringify(payload(marketplace))).toContain(userId);
     });
     it('persists a seller feature, exposes it to buyers, and rejects another store product', async () => {
       const selected = await request(app.getHttpServer())
@@ -197,13 +235,14 @@ const isolated =
         .auth(token, { type: 'bearer' })
         .send({ featuredProductId: productId })
         .expect(200);
-      expect(selected.body.featuredProductId).toBe(productId);
+      expect(payload(selected).featuredProductId).toBe(productId);
       const marketplace = await request(app.getHttpServer())
         .get('/buyer/marketplace')
         .expect(200);
       expect(
-        marketplace.body.vendors.find((v: { id: string }) => v.id === userId)
-          .featuredProductId,
+        payload(marketplace).vendors.find(
+          (v: { id: string }) => v.id === userId,
+        ).featuredProductId,
       ).toBe(productId);
       await request(app.getHttpServer())
         .patch(`/vendors/${userId}/storefront`)
@@ -216,6 +255,207 @@ const isolated =
         .send({ featuredProductId: productId })
         .expect(403);
     });
+    it('derives categories, persists About and keeps owner-only products private', async () => {
+      const url = `/vendors/${userId}`;
+      await request(app.getHttpServer())
+        .get(`${url}/manage-storefront`)
+        .expect(401);
+      await request(app.getHttpServer())
+        .post(`${url}/categories`)
+        .auth(token, { type: 'bearer' })
+        .send({ name: 'Manual category' })
+        .expect(404);
+      await request(app.getHttpServer())
+        .patch(`${url}/storefront`)
+        .auth(token, { type: 'bearer' })
+        .send({ about: 'Quality watches for everyday wear.' })
+        .expect(200);
+      const saved = await request(app.getHttpServer())
+        .get(`${url}/manage-storefront`)
+        .auth(token, { type: 'bearer' })
+        .expect(200);
+      expect(payload(saved).profile.about).toBe(
+        'Quality watches for everyday wear.',
+      );
+      expect(payload(saved).categories.length).toBeGreaterThan(0);
+      await request(app.getHttpServer())
+        .patch(`${url}/storefront`)
+        .auth(token, { type: 'bearer' })
+        .send({ about: 'a'.repeat(301) })
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`${url}/products/${productId}/archive`)
+        .auth(token, { type: 'bearer' })
+        .expect(201);
+      const publicView = await request(app.getHttpServer())
+        .get(`${url}/storefront`)
+        .expect(200);
+      expect(
+        payload(publicView).products.some(
+          (product: { id: string }) => product.id === productId,
+        ),
+      ).toBe(false);
+      const ownerView = await request(app.getHttpServer())
+        .get(`${url}/manage-storefront`)
+        .auth(token, { type: 'bearer' })
+        .expect(200);
+      expect(
+        payload(ownerView).products.some(
+          (product: { id: string }) => product.id === productId,
+        ),
+      ).toBe(true);
+      expect(payload(ownerView).categories).toHaveLength(0);
+      await request(app.getHttpServer())
+        .post(`${url}/products/${productId}/activate`)
+        .auth(token, { type: 'bearer' })
+        .expect(201);
+    });
+
+    it('serves rated reviews, unique paged trustees and persistent helpful votes', async () => {
+      const profile = await prisma.vendorProfile.findUniqueOrThrow({
+        where: { userId },
+      });
+      const buyer = await prisma.user.create({
+        data: {
+          firstName: 'Ada',
+          lastName: 'Local review',
+          city: 'Yaba',
+          state: 'Lagos',
+          registrationType: 'BUYER',
+        },
+      });
+      const buyerToken = app.get(JwtService).sign({ sub: buyer.id });
+      const order = await prisma.commerceOrder.create({
+        data: {
+          userId: buyer.id,
+          deliveryAddress: 'Test address',
+          latitude: 6.5,
+          longitude: 3.3,
+          paymentMethod: 'wallet',
+          status: 'delivered',
+          subtotal: 20000,
+          serviceFee: 0,
+          deliveryFee: 0,
+          total: 20000,
+          items: {
+            create: {
+              productId,
+              vendorId: userId,
+              vendorName: profile.storeName,
+              name: 'Watch',
+              subtitle: 'Local review test',
+              imageUri: '',
+              sku: 'TEST',
+              unitPrice: 20000,
+              quantity: 1,
+              deliveryAddress: 'Test address',
+            },
+          },
+        },
+      });
+      const created = await request(app.getHttpServer())
+        .post('/buyer/trust-reviews')
+        .auth(buyerToken, { type: 'bearer' })
+        .send({
+          orderId: order.id,
+          vendorId: userId,
+          reason: 'Reliable delivery and quality watches.',
+          rating: 4,
+        })
+        .expect(201);
+      const reviewId = payload(created).id;
+      // A second reviewed order from the same buyer must not create a second trustee.
+      const secondOrder = await prisma.commerceOrder.create({
+        data: {
+          userId: buyer.id,
+          deliveryAddress: 'Test address',
+          latitude: 6.5,
+          longitude: 3.3,
+          paymentMethod: 'wallet',
+          status: 'delivered',
+          subtotal: 1000,
+          serviceFee: 0,
+          deliveryFee: 0,
+          total: 1000,
+        },
+      });
+      await prisma.vendorTrustReview.create({
+        data: {
+          reviewerUserId: buyer.id,
+          vendorProfileId: profile.id,
+          orderId: secondOrder.id,
+          reason: 'Another excellent purchase.',
+          rating: 5,
+        },
+      });
+      const trustees = await request(app.getHttpServer())
+        .get(`/vendors/${userId}/trustees?limit=1`)
+        .expect(200);
+      expect(payload(trustees).total).toBe(1);
+      expect(payload(trustees).trustees).toHaveLength(1);
+      const reviews = await request(app.getHttpServer())
+        .get(`/vendors/${userId}/reviews?sort=highest&limit=1`)
+        .auth(token, { type: 'bearer' })
+        .expect(200);
+      expect(payload(reviews).total).toBe(2);
+      expect(payload(reviews).reviews[0].rating).toBe(5);
+      const page = await request(app.getHttpServer())
+        .get(`/vendors/${userId}/reviews?sort=highest&offset=1&limit=1`)
+        .auth(token, { type: 'bearer' })
+        .expect(200);
+      expect(payload(page).reviews[0].rating).toBe(4);
+      await request(app.getHttpServer())
+        .post(`/vendors/${userId}/reviews/${reviewId}/vote`)
+        .send({ helpful: true })
+        .expect(401);
+      await request(app.getHttpServer())
+        .post(`/vendors/${userId}/reviews/${reviewId}/vote`)
+        .auth(token, { type: 'bearer' })
+        .send({ helpful: true })
+        .expect(201);
+      const restored = await request(app.getHttpServer())
+        .get(`/vendors/${userId}/reviews?search=Reliable`)
+        .auth(token, { type: 'bearer' })
+        .expect(200);
+      expect(payload(restored).reviews[0]).toMatchObject({
+        helpfulCount: 1,
+        viewerVote: true,
+        rating: 4,
+      });
+      await request(app.getHttpServer())
+        .post(`/vendors/${userId}/reviews/${reviewId}/vote`)
+        .auth(token, { type: 'bearer' })
+        .send({ helpful: false })
+        .expect(201);
+      const switched = await request(app.getHttpServer())
+        .get(`/vendors/${userId}/reviews?search=Reliable`)
+        .auth(token, { type: 'bearer' })
+        .expect(200);
+      expect(payload(switched).reviews[0]).toMatchObject({
+        helpfulCount: 0,
+        notHelpfulCount: 1,
+        viewerVote: false,
+      });
+      await request(app.getHttpServer())
+        .post(`/vendors/${userId}/reviews/${reviewId}/vote`)
+        .auth(token, { type: 'bearer' })
+        .send({ helpful: null })
+        .expect(201);
+      const cleared = await request(app.getHttpServer())
+        .get(`/vendors/${userId}/reviews?search=Reliable`)
+        .auth(token, { type: 'bearer' })
+        .expect(200);
+      expect(payload(cleared).reviews[0]).toMatchObject({
+        helpfulCount: 0,
+        notHelpfulCount: 0,
+        viewerVote: null,
+      });
+      await request(app.getHttpServer())
+        .get(`/vendors/${userId}/reviews?limit=1000`)
+        .auth(token, { type: 'bearer' })
+        .expect(400);
+    });
+
     it('persists notification reads and settings and isolates notification ownership', async () => {
       await request(app.getHttpServer())
         .get('/seller/notifications')
@@ -224,7 +464,7 @@ const isolated =
         .get('/seller/notifications?type=inventory')
         .auth(token, { type: 'bearer' })
         .expect(200);
-      const notice = feed.body.notifications.find(
+      const notice = payload(feed).notifications.find(
         (n: { productId: string }) => n.productId === productId,
       );
       expect(notice.read).toBe(false);
@@ -243,7 +483,7 @@ const isolated =
         .auth(token, { type: 'bearer' })
         .expect(200);
       expect(
-        restored.body.notifications.find(
+        payload(restored).notifications.find(
           (n: { id: string }) => n.id === notice.id,
         ).read,
       ).toBe(true);
@@ -256,12 +496,12 @@ const isolated =
         .get('/seller/notifications/settings')
         .auth(token, { type: 'bearer' })
         .expect(200);
-      expect(settings.body.inventoryAlerts).toBe(false);
+      expect(payload(settings).inventoryAlerts).toBe(false);
       const disabled = await request(app.getHttpServer())
         .get('/seller/notifications?type=inventory')
         .auth(token, { type: 'bearer' })
         .expect(200);
-      expect(disabled.body.notifications).toHaveLength(0);
+      expect(payload(disabled).notifications).toHaveLength(0);
       await request(app.getHttpServer())
         .patch('/seller/notifications/settings')
         .auth(token, { type: 'bearer' })
@@ -275,7 +515,7 @@ const isolated =
         .get('/seller/notifications')
         .auth(token, { type: 'bearer' })
         .expect(200);
-      expect(readAll.body.unreadCount).toBe(0);
+      expect(payload(readAll).unreadCount).toBe(0);
     });
   },
 );

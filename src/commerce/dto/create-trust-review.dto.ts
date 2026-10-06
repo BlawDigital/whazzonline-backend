@@ -1,6 +1,16 @@
-import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  Min,
+  Max,
+  IsNotEmpty,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class CreateTrustReviewDto {
+  @IsOptional() @IsInt() @Min(1) @Max(5) rating?: number;
   @IsString()
   @IsNotEmpty()
   orderId!: string;

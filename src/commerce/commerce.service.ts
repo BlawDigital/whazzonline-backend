@@ -531,6 +531,7 @@ export class CommerceService {
       data: {
         orderId: order.id,
         reason,
+        ...(dto.rating === undefined ? {} : { rating: dto.rating }),
         reviewerUserId: userId,
         vendorProfileId: vendorProfile.id,
       },
