@@ -83,6 +83,7 @@ model User {
   orderIssues        OrderIssue[]
   returnRequests     ReturnRequest[]
   trustReviews       VendorTrustReview[] @relation("TrustReviewer")
+  reviewVotes        VendorReviewVote[]
   productLikes       ProductLike[]
   buyerConversations Conversation[]      @relation("ConversationBuyer")
   sentMessages       ChatMessage[]       @relation("MessageSender")
@@ -222,6 +223,7 @@ model VendorProfile {
   address           String
   landmark          String?
   description       String
+  about             String?
   logoUrl           String?
   bannerUrl         String?
   cacUrl            String?
@@ -521,10 +523,24 @@ model VendorTrustReview {
   orderId         String
   order           CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   reason          String
+  rating          Int?
+  votes           VendorReviewVote[]
 
   @@unique([reviewerUserId, vendorProfileId, orderId])
   @@index([vendorProfileId, createdAt])
   @@index([orderId])
+}
+
+model VendorReviewVote {
+  id        String @id @default(uuid())
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewId  String
+  review    VendorTrustReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  helpful   Boolean
+
+  @@unique([userId, reviewId])
+  @@index([reviewId])
 }
 
 model OrderIssue {

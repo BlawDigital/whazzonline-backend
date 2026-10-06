@@ -12,7 +12,11 @@ import { VendorsService } from './vendors.service';
 
 describe('VendorsService', () => {
   const prisma = {
-    commerceOrderItem: { findMany: jest.fn() },
+    commerceOrderItem: {
+      findMany: jest.fn(),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+    vendorTrustReview: { groupBy: jest.fn().mockResolvedValue([]) },
     product: {
       create: jest.fn(),
       delete: jest.fn(),
@@ -377,43 +381,19 @@ describe('VendorsService', () => {
 
     await expect(service.findStorefront('vendor-id')).resolves.toEqual({
       categories: [],
-      products: [{ id: 'product-id', likeCount: 0, status: 'ACTIVE' }],
+      products: [
+        { id: 'product-id', likeCount: 0, salesCount: 0, status: 'ACTIVE' },
+      ],
       profile: {
         avatarUrl: '/uploads/users/avatar.png',
         id: 'profile-id',
         storeName: 'Example Store',
         trustReviewCount: 0,
+        trusteeCount: 0,
         trustReviews: [],
         userId: 'vendor-id',
       },
     });
-  });
-
-  it('creates a unique category for the vendor storefront', async () => {
-    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
-    prisma.vendorProfile.findUnique.mockResolvedValue({ id: 'profile-id' });
-    prisma.vendorCategory.findUnique.mockResolvedValue(null);
-    prisma.vendorCategory.create.mockResolvedValue({
-      id: 'category-id',
-      name: 'Men Fashion',
-    });
-
-    await expect(
-      service.createCategory('vendor-id', { name: 'Men Fashion' }),
-    ).resolves.toMatchObject({ id: 'category-id', name: 'Men Fashion' });
-    expect(prisma.vendorCategory.create).toHaveBeenCalledWith({
-      data: { name: 'Men Fashion', vendorProfileId: 'profile-id' },
-    });
-  });
-
-  it('rejects a duplicate storefront category', async () => {
-    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
-    prisma.vendorProfile.findUnique.mockResolvedValue({ id: 'profile-id' });
-    prisma.vendorCategory.findUnique.mockResolvedValue({ id: 'category-id' });
-
-    await expect(
-      service.createCategory('vendor-id', { name: 'Men Fashion' }),
-    ).rejects.toThrow('already in your store');
   });
 
   it('rejects product creation until vendor setup is complete', async () => {
@@ -488,16 +468,7 @@ describe('VendorsService', () => {
         vendorProfileId: 'profile-id',
       },
     });
-    expect(prisma.vendorCategory.upsert).toHaveBeenCalledWith({
-      where: {
-        vendorProfileId_name: {
-          name: 'Men Fashion',
-          vendorProfileId: 'profile-id',
-        },
-      },
-      create: { name: 'Men Fashion', vendorProfileId: 'profile-id' },
-      update: {},
-    });
+
   });
 
   it('creates a time-limited offer for a vendor-owned product', async () => {

@@ -7,6 +7,7 @@ import {
 } from 'class-validator';
 
 export class UpdateStorefrontContentDto {
+  @IsOptional() @IsString() @MaxLength(300) about?: string;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(120) storeName?: string;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(80) state?: string;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(80) city?: string;

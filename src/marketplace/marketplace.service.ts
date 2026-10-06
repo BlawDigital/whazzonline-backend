@@ -60,6 +60,7 @@ export class MarketplaceService {
           reviewStatus: true,
           city: true,
           description: true,
+          about: true,
           logoUrl: true,
           state: true,
           storeName: true,
@@ -147,11 +148,16 @@ export class MarketplaceService {
         };
       }),
       vendors: vendors.map((vendor) => ({
-        featuredProductId: products.some(p => p.id === vendor.featuredProductId) ? vendor.featuredProductId : null,
+        featuredProductId: products.some(
+          (p) => p.id === vendor.featuredProductId,
+        )
+          ? vendor.featuredProductId
+          : null,
         category: vendor.category,
         verified: vendor.reviewStatus === 'APPROVED',
         coverUri: vendor.bannerUrl ?? '',
         description: vendor.description,
+        about: vendor.about,
         id: vendor.userId,
         location: `${vendor.city}, ${vendor.state}`,
         mapAddress: [vendor.address, vendor.city, vendor.state, 'Nigeria']

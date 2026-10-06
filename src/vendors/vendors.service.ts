@@ -7,7 +7,7 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
-import { CreateVendorCategoryDto } from './dto/create-vendor-category.dto';
+import { storeCategories } from './store-categories';
 import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import {
   CreateDeliveryOfferType,
@@ -230,14 +230,15 @@ export class VendorsService {
     return profile;
   }
 
-  async findStorefront(userId: string) {
+  async findStorefront(userId: string, manage = false) {
     await this.requireVendorUser(userId);
     const profile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
       include: {
         _count: { select: { trustReviews: true } },
-        categories: { orderBy: { createdAt: 'asc' } },
+
         products: {
+          ...(manage ? {} : { where: { status: 'ACTIVE' as const } }),
           orderBy: { createdAt: 'desc' },
           include: { _count: { select: { likes: true } } },
         },
@@ -264,33 +265,35 @@ export class VendorsService {
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
 
-    const {
-      _count,
-      categories = [],
-      products,
-      trustReviews,
-      user,
-      ...store
-    } = profile;
-    return {
-      categories: categories.map((category) => {
-        const categoryProducts = products.filter(
-          (product) =>
-            product.status !== 'DELETED' &&
-            (product.mainCategory === category.name ||
-              product.category === category.name),
-        );
-        return {
-          ...category,
-          productCount: categoryProducts.length,
-          outOfStock:
-            categoryProducts.length > 0 &&
-            categoryProducts.every((product) => product.quantity < 1),
-        };
+    const { _count, products, trustReviews, user, ...store } = profile;
+    const [sales, trustees] = await Promise.all([
+      products.length
+        ? this.prisma.commerceOrderItem.groupBy({
+            by: ['productId'],
+            where: {
+              productId: { in: products.map((product) => product.id) },
+              order: { status: 'delivered' },
+            },
+            _sum: { quantity: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.vendorTrustReview.groupBy({
+        by: ['reviewerUserId'],
+        where: { vendorProfileId: profile.id },
       }),
+    ]);
+    const sold = new Map<string, number>(
+      sales.map(
+        (sale: { productId: string; _sum: { quantity: number | null } }) =>
+          [sale.productId, sale._sum.quantity ?? 0] as const,
+      ),
+    );
+    return {
+      categories: storeCategories(products, profile.id),
       products: products.map(({ _count: productCount, ...product }) => ({
         ...product,
         likeCount: productCount?.likes ?? 0,
+        salesCount: sold.get(product.id) ?? 0,
       })),
       profile: {
         ...store,
@@ -301,6 +304,7 @@ export class VendorsService {
         cacUrl: undefined,
         avatarUrl: user.avatarUrl,
         trustReviewCount: _count.trustReviews,
+        trusteeCount: trustees.length,
         trustReviews: trustReviews.map((review) => ({
           avatarUrl: review.reviewer.avatarUrl,
           createdAt: review.createdAt.toISOString(),
@@ -427,19 +431,6 @@ export class VendorsService {
       throw new BadRequestException(
         'Variant quantities cannot exceed the total product quantity.',
       );
-    }
-
-    if (dto.mainCategory) {
-      await this.prisma.vendorCategory.upsert({
-        where: {
-          vendorProfileId_name: {
-            name: dto.mainCategory,
-            vendorProfileId: profile.id,
-          },
-        },
-        create: { name: dto.mainCategory, vendorProfileId: profile.id },
-        update: {},
-      });
     }
 
     return this.prisma.product.create({
@@ -776,34 +767,6 @@ export class VendorsService {
       data: { status: 'DELETED' },
     });
     return { id: productId };
-  }
-
-  async createCategory(userId: string, dto: CreateVendorCategoryDto) {
-    await this.requireVendorUser(userId);
-    const profile = await this.prisma.vendorProfile.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-    if (!profile) throw new NotFoundException('Vendor profile not found.');
-    const existing = await this.prisma.vendorCategory.findUnique({
-      where: {
-        vendorProfileId_name: { name: dto.name, vendorProfileId: profile.id },
-      },
-    });
-    if (existing)
-      throw new BadRequestException('This category is already in your store.');
-    return this.prisma.vendorCategory.create({
-      data: { name: dto.name, vendorProfileId: profile.id },
-    });
-  }
-
-  async deleteCategory(userId: string, categoryId: string) {
-    await this.requireVendorUser(userId);
-    const result = await this.prisma.vendorCategory.deleteMany({
-      where: { id: categoryId, vendorProfile: { userId } },
-    });
-    if (!result.count) throw new NotFoundException('Category not found.');
-    return { id: categoryId };
   }
 
   async updateStorefront(userId: string, dto: UpdateStorefrontContentDto) {
