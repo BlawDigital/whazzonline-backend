@@ -146,6 +146,8 @@ export class MessagingService {
       id: conversation.id,
       status: conversation.status.toLowerCase(),
       subject: conversation.subject ?? undefined,
+      productId: conversation.productId ?? undefined,
+      productName: conversation.productName ?? undefined,
       canManageStatus: seller,
       name: seller
         ? [conversation.buyer.firstName, conversation.buyer.lastName]
@@ -184,6 +186,15 @@ export class MessagingService {
       include: conversationInclude,
       orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     });
+    // Reserved order threads only expose an order link after checking both participants.
+    const orderIds = conversations.flatMap((conversation) => {
+      const match = conversation.clientThreadId?.match(/^order:([0-9a-f-]{36}):/i);
+      return match ? [match[1]] : [];
+    });
+    const orders = orderIds.length ? await this.prisma.commerceOrder.findMany({
+      where: { id: { in: orderIds }, OR: [{ userId }, { items: { some: { vendorId: userId } } }] },
+      select: { id: true, userId: true, items: { select: { vendorId: true } } },
+    }) : [];
     return {
       conversations: await Promise.all(
         conversations.map(async (conversation) => {
@@ -198,7 +209,11 @@ export class MessagingService {
               ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
             },
           });
-          return this.mapConversation(conversation, userId, unread);
+          const order = orders.find((order) =>
+            conversation.clientThreadId === `order:${order.id}:${conversation.vendorProfileId}` &&
+            conversation.buyerUserId === order.userId &&
+            order.items.some((item) => item.vendorId === conversation.vendorProfile.userId));
+          return { ...this.mapConversation(conversation, userId, unread), ...(order ? { orderId: order.id } : {}) };
         }),
       ),
       messagesByConversation: {},
@@ -323,12 +338,16 @@ export class MessagingService {
       record = existing;
     } else if (dto.newThread) {
       const clientThreadId = dto.clientThreadId || randomUUID();
+      if (clientThreadId.startsWith('order:'))
+        throw new BadRequestException('Order conversations must be opened from an order.');
       record = await this.prisma.conversation.upsert({
         where: { clientThreadId },
         create: {
           buyerUserId: userId,
           clientThreadId,
           subject: context?.name ?? 'Store enquiry',
+          productId: context?.productId,
+          productName: context?.name,
           vendorProfileId: vendor.id,
         },
         update: {},
@@ -347,6 +366,7 @@ export class MessagingService {
             buyerUserId: userId,
             vendorProfileId: vendor.id,
             status: { in: ['OPEN', 'PENDING'] },
+            productId: context?.productId ?? null,
           },
           include: conversationInclude,
           orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
@@ -355,6 +375,8 @@ export class MessagingService {
           data: {
             buyerUserId: userId,
             subject: context?.name ?? 'Store enquiry',
+            productId: context?.productId,
+            productName: context?.name,
             vendorProfileId: vendor.id,
           },
           include: conversationInclude,

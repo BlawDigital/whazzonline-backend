@@ -1,9 +1,14 @@
 import { IsIn, IsString, MaxLength, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { normalizeOrderStatus } from '../order-status';
 
 export class RejectSellerOrderDto {
   @IsString() @MinLength(3) @MaxLength(800) reason!: string;
 }
 export class UpdateSellerOrderDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? normalizeOrderStatus(value) : value,
+  )
   @IsIn(['processing', 'ready', 'out_for_delivery', 'delivered'])
   status!: string;
 }

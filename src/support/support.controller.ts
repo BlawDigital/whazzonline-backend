@@ -71,6 +71,9 @@ abstract class SupportControllerBase {
 @UseGuards(JwtAuthGuard)
 export class SellerSupportController extends SupportControllerBase {
   protected readonly audience = 'seller' as const;
+  constructor(support: SupportService) {
+    super(support);
+  }
 
   @Get('contact')
   contact(@Req() request: AuthenticatedRequest) {
@@ -127,6 +130,9 @@ export class SellerSupportController extends SupportControllerBase {
 @UseGuards(JwtAuthGuard)
 export class AdminSupportController extends SupportControllerBase {
   protected readonly audience = 'admin' as const;
+  constructor(support: SupportService) {
+    super(support);
+  }
 
   @Get('tickets')
   tickets(

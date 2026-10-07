@@ -36,6 +36,7 @@ export class MarketplaceService {
       this.prisma.product.findMany({
         where: { status: 'ACTIVE', vendorProfile: { setupCompleted: true } },
         include: {
+          aisle: { select: { name: true } },
           _count: { select: { likes: true } },
           vendorProfile: {
             select: {
@@ -61,6 +62,11 @@ export class MarketplaceService {
           city: true,
           description: true,
           about: true,
+          socialLinks: true,
+          representativeName: true,
+          representativeRole: true,
+          representativeBio: true,
+          user: { select: { registrationType: true, role: true } },
           logoUrl: true,
           state: true,
           storeName: true,
@@ -101,6 +107,8 @@ export class MarketplaceService {
     const salesByProduct = new Map(
       sales.map((sale) => [sale.productId, sale._sum.quantity ?? 0]),
     );
+    const ratings = products.length ? await this.prisma.productReview.groupBy({ by: ['productId'], where: { productId: { in: products.map(product => product.id) } }, _avg: { rating: true }, _count: { _all: true } }) : [];
+    const ratingByProduct = new Map(ratings.map(row => [row.productId, { average: row._avg.rating ?? 0, count: row._count._all }]));
     const now = new Date();
     return {
       categories,
@@ -116,6 +124,9 @@ export class MarketplaceService {
         return {
           category: categoryFor(product.category),
           storeCategory: product.category,
+          categoryPath: [product.mainCategory, ...(product.subCategories || []), product.aisle?.name].filter(Boolean),
+          reviewAverage: ratingByProduct.get(product.id)?.average ?? 0,
+          reviewCount: ratingByProduct.get(product.id)?.count ?? 0,
           dateListed: dateListed(product.createdAt),
           id: product.id,
           likeCount: product._count?.likes ?? 0,
@@ -158,6 +169,11 @@ export class MarketplaceService {
         coverUri: vendor.bannerUrl ?? '',
         description: vendor.description,
         about: vendor.about,
+        socialLinks: vendor.socialLinks,
+        representativeName: vendor.representativeName,
+        representativeRole: vendor.representativeRole,
+        representativeBio: vendor.representativeBio,
+        isBusiness: vendor.user?.registrationType === 'BUSINESS' || vendor.user?.role === 'BUSINESS',
         id: vendor.userId,
         location: `${vendor.city}, ${vendor.state}`,
         mapAddress: [vendor.address, vendor.city, vendor.state, 'Nigeria']

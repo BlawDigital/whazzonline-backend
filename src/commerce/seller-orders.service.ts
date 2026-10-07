@@ -7,6 +7,13 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 import { DeliveryProvider, type DeliveryLevel } from './delivery.provider';
 import { lockOrder, syncOrder } from './fulfillment';
+import { normalizeOrderStatus } from './order-status';
+import {
+  orderNotificationSelect,
+  orderNotices,
+  supportReplyNotice,
+  supportReplySelect,
+} from './order-notifications';
 
 const deliveryCapability = { available: true, mode: 'mock', provider: 'mock' };
 const supportCapability = { available: true, liveChat: true };
@@ -25,6 +32,7 @@ function mapOrderStatusToFulfillmentStatus(status: string) {
     case 'picked-up':
     case 'in-transit':
     case 'out-for-delivery':
+    case 'out_for_delivery':
       return 'out_for_delivery';
     case 'delivered':
       return 'delivered';
@@ -65,9 +73,13 @@ export class SellerOrdersService {
     });
     if (existing) return existing;
 
-    const status = mapOrderStatusToFulfillmentStatus(order.status);
-    const created = await tx.sellerFulfillment.create({
-      data: {
+    const status = mapOrderStatusToFulfillmentStatus(
+      normalizeOrderStatus(order.status),
+    );
+    const created = await tx.sellerFulfillment.upsert({
+      where: { orderId_vendorId: { orderId: order.id, vendorId: userId } },
+      update: {},
+      create: {
         orderId: order.id,
         vendorId: userId,
         status,
@@ -106,40 +118,30 @@ export class SellerOrdersService {
   }
 
   async notifications(userId: string) {
-    const { orders } = await this.list(userId);
-    const notifications = orders
-      .flatMap((order) => {
-        const history = Array.isArray(order.history) ? order.history : [];
-        if (!history.length) {
-          return [
-            {
-              body: `Order #${order.displayId} is waiting for your review.`,
-              createdAt: order.createdAt,
-              id: `order:${order.id}`,
-              orderId: order.id,
-              read: false,
-              title: 'New order',
-              type: 'order',
-            },
-          ];
-        }
-        return history.map((event) => ({
-          body:
-            event.status === 'pending'
-              ? `Order #${order.displayId} is waiting for your review.`
-              : `Order #${order.displayId} is now ${event.status.replace(/_/g, ' ')}.`,
-          createdAt: event.createdAt.toISOString(),
-          id: event.id,
-          orderId: order.id,
-          read: event.actorUserId === userId,
-          title: event.status === 'pending' ? 'New order' : 'Order update',
-          type: 'order',
-        }));
-      })
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const [orders, replies] = await Promise.all([
+      this.prisma.commerceOrder.findMany({
+        where: { items: { some: { vendorId: userId } } },
+        select: orderNotificationSelect,
+        orderBy: { updatedAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.supportMessage.findMany({
+        where: {
+          ticket: { ownerUserId: userId },
+          senderUserId: { not: userId },
+        },
+        select: supportReplySelect,
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+    ]);
+    const notifications = [
+      ...orders.flatMap((order) => orderNotices(order, userId)),
+      ...replies.map(supportReplyNotice),
+    ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return {
-      notifications: notifications.slice(0, 50),
-      unreadCount: notifications.filter((item) => !item.read).length,
+      notifications,
+      unreadCount: notifications.filter((n) => !n.read).length,
     };
   }
 
@@ -188,7 +190,7 @@ export class SellerOrdersService {
     return {
       id,
       createdAt: order.createdAt.toISOString(),
-      status: fulfillment.status,
+      status: normalizeOrderStatus(fulfillment.status),
       rejectionReason: fulfillment.rejectionReason,
       displayId: order.id.slice(0, 8).toUpperCase(),
       customer: {
@@ -223,7 +225,10 @@ export class SellerOrdersService {
       paymentStatus: 'unverified',
       latitude: order.latitude,
       longitude: order.longitude,
-      history: fulfillment.history,
+      history: fulfillment.history.map((event) => ({
+        ...event,
+        status: normalizeOrderStatus(event.status),
+      })),
       issues,
       deliveryRequest: fulfillment.deliveryRequest,
       ...this.capabilities(),
@@ -250,7 +255,8 @@ export class SellerOrdersService {
         { id: order.id, status: order.status, userId: order.userId },
         tx,
       );
-      if (current.status === status) {
+      const currentStatus = normalizeOrderStatus(current.status);
+      if (currentStatus === status) {
         if (status === 'rejected' && current.rejectionReason !== reason?.trim())
           throw new ConflictException(
             'This order was already rejected with another reason.',
@@ -263,9 +269,9 @@ export class SellerOrdersService {
         ready: ['out_for_delivery'],
         out_for_delivery: ['delivered'],
       };
-      if (!allowed[current.status]?.includes(status))
+      if (!allowed[currentStatus]?.includes(status))
         throw new ConflictException(
-          `Cannot change ${current.status} to ${status}.`,
+          `Cannot change ${currentStatus} to ${status}.`,
         );
       if (status === 'processing') {
         const quantities = new Map<string, number>();
@@ -362,45 +368,51 @@ export class SellerOrdersService {
     id: string,
     serviceLevel: DeliveryLevel,
   ) {
-    const order = await this.prisma.commerceOrder.findFirst({
-      where: { id, items: { some: { vendorId: userId } } },
-      include: {
-        fulfillments: {
-          where: { vendorId: userId },
-          include: { deliveryRequest: true },
+    await this.prisma.$transaction(async (tx) => {
+      await lockOrder(tx, id);
+      const order = await tx.commerceOrder.findFirst({
+        where: { id, items: { some: { vendorId: userId } } },
+        include: {
+          fulfillments: {
+            where: { vendorId: userId },
+            include: { deliveryRequest: true },
+          },
         },
-      },
-    });
-    if (!order) throw new NotFoundException('Order not found.');
-    const fulfillment =
-      order.fulfillments[0] ?? (await this.ensureFulfillment(userId, order));
-    if (
-      !['processing', 'ready', 'out_for_delivery'].includes(fulfillment.status)
-    ) {
-      throw new ConflictException(
-        'Accept and prepare the order before requesting delivery.',
-      );
-    }
-    if (fulfillment.deliveryRequest) {
-      if (fulfillment.deliveryRequest.serviceLevel !== serviceLevel) {
+      });
+      if (!order) throw new NotFoundException('Order not found.');
+      const fulfillment =
+        order.fulfillments[0] ??
+        (await this.ensureFulfillment(userId, order, tx));
+      if (
+        !['processing', 'ready', 'out_for_delivery'].includes(
+          normalizeOrderStatus(fulfillment.status),
+        )
+      ) {
         throw new ConflictException(
-          'A delivery request already exists for this order.',
+          'Accept and prepare the order before requesting delivery.',
         );
       }
-      return this.delivery(userId, id);
-    }
-    const booking = this.deliveryProvider.book(fulfillment.id, serviceLevel);
-    await this.prisma.deliveryRequest.create({
-      data: {
-        fulfillmentId: fulfillment.id,
-        provider: booking.provider,
-        serviceLevel: booking.serviceLevel,
-        status: booking.status,
-        fee: booking.fee,
-        etaMinutes: booking.etaMinutes,
-        trackingCode: booking.trackingCode,
-        rider: booking.rider,
-      },
+      if (fulfillment.deliveryRequest) {
+        if (fulfillment.deliveryRequest.serviceLevel !== serviceLevel) {
+          throw new ConflictException(
+            'A delivery request already exists for this order.',
+          );
+        }
+        return;
+      }
+      const booking = this.deliveryProvider.book(fulfillment.id, serviceLevel);
+      await tx.deliveryRequest.create({
+        data: {
+          fulfillmentId: fulfillment.id,
+          provider: booking.provider,
+          serviceLevel: booking.serviceLevel,
+          status: booking.status,
+          fee: booking.fee,
+          etaMinutes: booking.etaMinutes,
+          trackingCode: booking.trackingCode,
+          rider: booking.rider,
+        },
+      });
     });
     return this.delivery(userId, id);
   }
@@ -418,26 +430,48 @@ export class SellerOrdersService {
     });
     if (!order || !order.items[0])
       throw new NotFoundException('Order not found.');
-    const issue = await this.prisma.orderIssue.create({
-      data: {
-        userId,
-        orderId,
-        itemId: order.items[0].id,
-        type: reason.trim(),
-        description: description.trim(),
-        replies: evidenceUrls.length
-          ? {
-              create: {
-                authorUserId: userId,
-                text: description.trim(),
-                evidenceUrls,
-              },
-            }
-          : undefined,
-      },
-      include: { replies: { orderBy: { createdAt: 'asc' } } },
+    return this.prisma.$transaction(async (tx) => {
+      const issue = await tx.orderIssue.create({
+        data: {
+          userId,
+          orderId,
+          itemId: order.items[0].id,
+          type: reason.trim(),
+          description: description.trim(),
+          replies: evidenceUrls.length
+            ? {
+                create: {
+                  authorUserId: userId,
+                  text: description.trim(),
+                  evidenceUrls,
+                },
+              }
+            : undefined,
+        },
+        include: { replies: { orderBy: { createdAt: 'asc' } } },
+      });
+      const ticket = await tx.supportTicket.create({
+        data: {
+          ownerUserId: userId,
+          orderId,
+          category: 'Order dispute',
+          subject:
+            `Order #${orderId.slice(0, 8).toUpperCase()}: ${reason.trim()}`.slice(
+              0,
+              160,
+            ),
+          messages: {
+            create: {
+              senderUserId: userId,
+              senderRole: 'seller',
+              text: `${description.trim()}${evidenceUrls.length ? '\nEvidence:\n' + evidenceUrls.join('\n') : ''}`,
+            },
+          },
+        },
+        select: { id: true },
+      });
+      return { ...issue, supportTicketId: ticket.id };
     });
-    return issue;
   }
 
   async customerConversation(userId: string, orderId: string) {
@@ -463,8 +497,15 @@ export class SellerOrdersService {
         vendorProfileId: vendor.id,
       },
       update: {},
-      select: { id: true },
+      select: { id: true, buyerUserId: true, vendorProfileId: true },
     });
-    return conversation;
+    if (
+      conversation.buyerUserId !== order.userId ||
+      conversation.vendorProfileId !== vendor.id
+    )
+      throw new ConflictException(
+        'The order conversation belongs to another account.',
+      );
+    return { id: conversation.id };
   }
 }

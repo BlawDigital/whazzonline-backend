@@ -73,22 +73,24 @@ model User {
   isActive      Boolean @default(true)
   emailVerified Boolean @default(false)
 
-  notificationReads SellerNotificationRead[]
+  notificationReads    SellerNotificationRead[]
   notificationSettings SellerNotificationSettings?
-  vendorProfile      VendorProfile?
-  wallet             Wallet?
-  referrals          Referral[]          @relation("Referrer")
-  cartItems          CommerceCartItem[]
-  orders             CommerceOrder[]
-  orderIssues        OrderIssue[]
-  returnRequests     ReturnRequest[]
-  trustReviews       VendorTrustReview[] @relation("TrustReviewer")
-  reviewVotes        VendorReviewVote[]
-  productLikes       ProductLike[]
-  buyerConversations Conversation[]      @relation("ConversationBuyer")
-  sentMessages       ChatMessage[]       @relation("MessageSender")
-  supportTickets     SupportTicket[]     @relation("SupportTicketOwner")
-  supportMessages    SupportMessage[]    @relation("SupportMessageSender")
+  vendorProfile        VendorProfile?
+  wallet               Wallet?
+  referrals            Referral[]                  @relation("Referrer")
+  cartItems            CommerceCartItem[]
+  orders               CommerceOrder[]
+  orderIssues          OrderIssue[]
+  returnRequests       ReturnRequest[]
+  trustReviews         VendorTrustReview[]         @relation("TrustReviewer")
+  reviewVotes          VendorReviewVote[]
+  productLikes         ProductLike[]
+  merchantContacts     MerchantContact[]
+  productReviews       ProductReview[]
+  buyerConversations   Conversation[]              @relation("ConversationBuyer")
+  sentMessages         ChatMessage[]               @relation("MessageSender")
+  supportTickets       SupportTicket[]             @relation("SupportTicketOwner")
+  supportMessages      SupportMessage[]            @relation("SupportMessageSender")
 
   //User shopping intrests
   interests Interest[]
@@ -214,28 +216,32 @@ model VendorProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  storeName         String
-  category          String
-  subCategory       String
-  state             String
-  city              String
-  lga               String
-  address           String
-  landmark          String?
-  description       String
-  about             String?
-  logoUrl           String?
-  bannerUrl         String?
-  cacUrl            String?
-  bankName          String?
-  bankCode          String?
-  bankAccountNumber String?
-  bankAccountName   String?
-  sellerType        String?
-  termsAcceptedAt   DateTime?
-  submittedAt       DateTime?
-  reviewStatus      VendorReviewStatus @default(DRAFT)
-  setupCompleted    Boolean            @default(false)
+  storeName          String
+  category           String
+  subCategory        String
+  state              String
+  city               String
+  lga                String
+  address            String
+  landmark           String?
+  description        String
+  about              String?
+  socialLinks        Json               @default("[]")
+  representativeName String?
+  representativeRole String?
+  representativeBio  String?
+  logoUrl            String?
+  bannerUrl          String?
+  cacUrl             String?
+  bankName           String?
+  bankCode           String?
+  bankAccountNumber  String?
+  bankAccountName    String?
+  sellerType         String?
+  termsAcceptedAt    DateTime?
+  submittedAt        DateTime?
+  reviewStatus       VendorReviewStatus @default(DRAFT)
+  setupCompleted     Boolean            @default(false)
 
   featuredProductId String?
 
@@ -244,6 +250,8 @@ model VendorProfile {
   trustReviews  VendorTrustReview[]
   offers        Offer[]
   conversations Conversation[]
+  contacts      MerchantContact[]
+  content       MerchantContent[]
 
   @@index([category])
   @@index([state, city])
@@ -257,20 +265,27 @@ enum ProductStatus {
 }
 
 model VendorCategory {
-  id              String        @id @default(uuid())
-  createdAt       DateTime      @default(now())
+  id              String           @id @default(uuid())
+  createdAt       DateTime         @default(now())
   name            String
+  parentId        String?
+  parent          VendorCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children        VendorCategory[] @relation("CategoryTree")
+  products        Product[]
   vendorProfileId String
-  vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  vendorProfile   VendorProfile    @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
 
   @@unique([vendorProfileId, name])
   @@index([vendorProfileId, createdAt])
+  @@index([parentId])
 }
 
 model Product {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String          @id @default(uuid())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  aisleId   String?
+  aisle     VendorCategory? @relation(fields: [aisleId], references: [id], onDelete: SetNull)
 
   vendorProfileId String
   vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
@@ -293,11 +308,13 @@ model Product {
   cartItems CommerceCartItem[]
   likes     ProductLike[]
   offers    OfferProduct[]
+  reviews   ProductReview[]
 
   @@index([vendorProfileId, status])
   @@index([category])
   @@index([createdAt])
   @@index([promoStartsAt, promoEndsAt])
+  @@index([aisleId])
 }
 
 enum OfferType {
@@ -388,12 +405,15 @@ model Conversation {
   sellerLastReadAt DateTime?
   clientThreadId   String?            @unique
   subject          String?
+  productId        String?
+  productName      String?
   status           ConversationStatus @default(OPEN)
   messages         ChatMessage[]
 
   @@index([buyerUserId, updatedAt])
   @@index([vendorProfileId, updatedAt])
   @@index([buyerUserId, vendorProfileId, status, updatedAt])
+  @@index([vendorProfileId, productId, updatedAt])
 }
 
 model ChatMessage {
@@ -517,11 +537,11 @@ model VendorTrustReview {
   updatedAt DateTime @updatedAt
 
   reviewerUserId  String
-  reviewer        User          @relation("TrustReviewer", fields: [reviewerUserId], references: [id], onDelete: Cascade)
+  reviewer        User               @relation("TrustReviewer", fields: [reviewerUserId], references: [id], onDelete: Cascade)
   vendorProfileId String
-  vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  vendorProfile   VendorProfile      @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
   orderId         String
-  order           CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order           CommerceOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
   reason          String
   rating          Int?
   votes           VendorReviewVote[]
@@ -532,12 +552,12 @@ model VendorTrustReview {
 }
 
 model VendorReviewVote {
-  id        String @id @default(uuid())
-  userId    String
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reviewId  String
-  review    VendorTrustReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
-  helpful   Boolean
+  id       String            @id @default(uuid())
+  userId   String
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewId String
+  review   VendorTrustReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  helpful  Boolean
 
   @@unique([userId, reviewId])
   @@index([reviewId])
@@ -676,16 +696,61 @@ model ReturnRequestItem {
 
 model SellerNotificationRead {
   userId String
-  key String
+  key    String
   readAt DateTime @default(now())
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@id([userId, key])
 }
+
 model SellerNotificationSettings {
-  userId String @id
-  orders Boolean @default(true)
-  priceSuggestions Boolean @default(true)
-  inventoryAlerts Boolean @default(true)
+  userId           String   @id
+  orders           Boolean  @default(true)
+  priceSuggestions Boolean  @default(true)
+  inventoryAlerts  Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MerchantContact {
+  userId     String
+  merchantId String
+  createdAt  DateTime      @default(now())
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant   VendorProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@id([userId, merchantId])
+  @@index([merchantId])
+}
+
+model MerchantContent {
+  id            String        @id @default(uuid())
+  createdAt     DateTime      @default(now())
+  merchantId    String
+  merchant      VendorProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  kind          String
+  topic         String        @default("UPDATE")
+  title         String
+  caption       String        @default("")
+  mediaUrl      String
+  mediaType     String
+  mediaPublicId String
+
+  @@index([merchantId, kind, createdAt])
+  @@index([kind, createdAt])
+}
+
+model ProductReview {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  userId    String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating    Int
+  comment   String
+
+  @@unique([productId, userId])
+  @@index([productId, createdAt])
 }
