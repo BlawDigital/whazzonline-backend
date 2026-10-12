@@ -2,6 +2,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { MerchantService } from './merchant.service';
 import { PrismaService } from 'prisma/prisma.service';
 import { uploadMerchantMedia } from './merchant-media';
+import { cloudinaryClient } from '../storage/cloudinary-storage';
 
 jest.mock('prisma/prisma.service', () => ({ PrismaService: class {} }));
 jest.mock('./merchant-media', () => ({ uploadMerchantMedia: jest.fn() }));
@@ -18,6 +19,8 @@ describe('merchant persistence and permissions', () => {
       count: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
     },
     vendorCategory: { findFirst: jest.fn(), create: jest.fn() },
     product: { findFirst: jest.fn(), update: jest.fn() },
@@ -34,6 +37,84 @@ describe('merchant persistence and permissions', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     prisma.vendorProfile.findUnique.mockResolvedValue(merchant);
+  });
+
+  it('denies edits to another merchant Story before uploading media', async () => {
+    prisma.merchantContent.findUnique.mockResolvedValue({
+      merchant: { userId: 'other' },
+    });
+    await expect(
+      service.updateContent(
+        'merchant',
+        'story',
+        { title: 'New title' },
+        {} as Express.Multer.File,
+      ),
+    ).rejects.toThrow(ForbiddenException);
+    expect(uploadMerchantMedia).not.toHaveBeenCalled();
+    expect(prisma.merchantContent.update).not.toHaveBeenCalled();
+  });
+
+  it('edits persisted story text without requiring a fresh upload', async () => {
+    prisma.merchantContent.findUnique.mockResolvedValue({
+      merchant: { userId: 'merchant' },
+      kind: 'STORY',
+    });
+    prisma.merchantContent.update.mockResolvedValue({
+      id: 'story',
+      title: 'Fresh arrival',
+    });
+    await expect(
+      service.updateContent('merchant', 'story', {
+        title: '  Fresh arrival  ',
+        caption: '',
+        topic: 'NEW_IN',
+      }),
+    ).resolves.toMatchObject({ id: 'story' });
+    expect(prisma.merchantContent.update).toHaveBeenCalledWith({
+      where: { id: 'story' },
+      data: { title: 'Fresh arrival', caption: '', topic: 'NEW_IN' },
+    });
+    expect(uploadMerchantMedia).not.toHaveBeenCalled();
+    await expect(
+      service.updateContent('merchant', 'story', { title: '  ' }),
+    ).rejects.toThrow('at least two');
+  });
+
+  it('removes replaced media after save and rolls back a fresh upload on database failure', async () => {
+    const destroy = jest.fn().mockResolvedValue({});
+    jest
+      .mocked(cloudinaryClient)
+      .mockReturnValue({ uploader: { destroy } } as unknown as ReturnType<
+        typeof cloudinaryClient
+      >);
+    prisma.merchantContent.findUnique.mockResolvedValue({
+      merchant: { userId: 'merchant' },
+      kind: 'STORY',
+      mediaPublicId: 'old',
+      mediaType: 'IMAGE',
+    });
+    jest
+      .mocked(uploadMerchantMedia)
+      .mockResolvedValue({
+        mediaUrl: 'https://media.example/new.mp4',
+        mediaType: 'VIDEO',
+        publicId: 'new',
+        resourceType: 'video',
+      });
+    prisma.merchantContent.update.mockResolvedValue({ id: 'story' });
+    const file = { mimetype: 'video/mp4' } as Express.Multer.File;
+    await service.updateContent('merchant', 'story', {}, file);
+    expect(destroy).toHaveBeenCalledWith('old', { resource_type: 'image' });
+    destroy.mockClear();
+    prisma.merchantContent.update.mockRejectedValue(
+      new Error('Database unavailable'),
+    );
+    await expect(
+      service.updateContent('merchant', 'story', {}, file),
+    ).rejects.toThrow('Database unavailable');
+    expect(destroy).toHaveBeenCalledWith('new', { resource_type: 'video' });
+    expect(destroy).not.toHaveBeenCalledWith('old', expect.anything());
   });
 
   it('saves an idempotent database contact and rejects self contacts', async () => {
@@ -122,14 +203,12 @@ describe('merchant persistence and permissions', () => {
       mimetype: 'video/mp4',
       buffer: Buffer.from('fixture'),
     } as Express.Multer.File;
-    jest
-      .mocked(uploadMerchantMedia)
-      .mockResolvedValue({
-        mediaUrl: 'https://media.example/guide.mp4',
-        mediaType: 'VIDEO',
-        publicId: 'media-id',
-        resourceType: 'video',
-      });
+    jest.mocked(uploadMerchantMedia).mockResolvedValue({
+      mediaUrl: 'https://media.example/guide.mp4',
+      mediaType: 'VIDEO',
+      publicId: 'media-id',
+      resourceType: 'video',
+    });
     prisma.merchantContent.create.mockResolvedValue({ id: 'guide' });
     await expect(
       service.createContent(

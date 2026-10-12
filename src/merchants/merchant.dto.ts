@@ -36,6 +36,22 @@ export class FeedDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10000) offset = 0;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit = 20;
 }
+export class UpdateContentDto {
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(120) title?: string;
+  @IsOptional() @IsString() @MaxLength(3000) caption?: string;
+  @IsOptional()
+  @IsIn([
+    'UPDATE',
+    'NEW_IN',
+    'BEST_SELLER',
+    'HOW_TO',
+    'FAQ',
+    'OFFER',
+    'ANNOUNCEMENT',
+    'PARTNERSHIP',
+  ])
+  topic?: string;
+}
 export class ProductReviewDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(5) rating!: number;
   @IsString() @MinLength(3) @MaxLength(2000) comment!: string;
