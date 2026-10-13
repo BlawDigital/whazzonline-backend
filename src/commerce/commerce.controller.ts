@@ -19,11 +19,12 @@ import { CreateReturnDto } from './dto/create-return.dto';
 import { CreateTrustReviewDto } from './dto/create-trust-review.dto';
 import { ReportOrderIssueDto } from './dto/report-order-issue.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
+import { GuestCheckoutDto } from './dto/guest-checkout.dto';
 
 @Controller('buyer')
 @UseGuards(JwtAuthGuard)
 export class CommerceController {
-  constructor(private readonly commerce: CommerceService) {}
+  constructor(private readonly commerce: CommerceService) { }
 
   @Get('cart')
   load(@Req() request: AuthenticatedRequest) {

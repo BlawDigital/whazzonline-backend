@@ -49,7 +49,7 @@ export class SellerOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly deliveryProvider: DeliveryProvider,
-  ) {}
+  ) { }
 
   capabilities() {
     return { delivery: deliveryCapability, support: supportCapability };
@@ -60,7 +60,7 @@ export class SellerOrdersService {
     order: {
       id: string;
       status: string;
-      userId: string;
+      userId: string | null;
     },
     tx: SellerOrderDb = this.prisma,
   ) {
@@ -193,15 +193,29 @@ export class SellerOrdersService {
       status: normalizeOrderStatus(fulfillment.status),
       rejectionReason: fulfillment.rejectionReason,
       displayId: order.id.slice(0, 8).toUpperCase(),
-      customer: {
-        id: order.user.id,
-        name:
-          [order.user.firstName, order.user.lastName]
-            .filter(Boolean)
-            .join(' ') || 'Buyer',
-        phone: order.user.phone,
-        avatarUrl: order.user.avatarUrl,
-      },
+
+
+      customer: order.user
+        ? {
+          id: order.user.id,
+          name:
+            [order.user.firstName, order.user.lastName]
+              .filter(Boolean)
+              .join(" ") || "Buyer",
+          phone: order.user.phone,
+          avatarUrl: order.user.avatarUrl,
+        }
+        : {
+          id: undefined,
+          name:
+            [order.guestFirstName, order.guestLastName]
+              .filter(Boolean)
+              .join(" ") || "Guest",
+          phone: order.guestPhone,
+          avatarUrl: null,
+        },
+
+
       deliveryAddress: order.deliveryAddress,
       items: order.items.map((item) => ({
         id: item.id,
@@ -440,12 +454,12 @@ export class SellerOrdersService {
           description: description.trim(),
           replies: evidenceUrls.length
             ? {
-                create: {
-                  authorUserId: userId,
-                  text: description.trim(),
-                  evidenceUrls,
-                },
-              }
+              create: {
+                authorUserId: userId,
+                text: description.trim(),
+                evidenceUrls,
+              },
+            }
             : undefined,
         },
         include: { replies: { orderBy: { createdAt: 'asc' } } },
@@ -487,6 +501,14 @@ export class SellerOrdersService {
     ]);
     if (!order || !vendor)
       throw new NotFoundException('Order or seller profile not found.');
+
+    if (!order.userId) {
+      throw new ConflictException(
+        'Guest orders do not have an account conversation.',
+      );
+    }
+
+
     const clientThreadId = `order:${orderId}:${vendor.id}`;
     const conversation = await this.prisma.conversation.upsert({
       where: { clientThreadId },

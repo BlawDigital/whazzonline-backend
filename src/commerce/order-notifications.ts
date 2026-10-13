@@ -11,7 +11,7 @@ export interface OrderNotice {
 }
 interface NotificationOrder {
   id: string;
-  userId: string;
+  userId: string | null;
   status: string;
   createdAt: Date;
   updatedAt: Date;
@@ -22,7 +22,7 @@ interface NotificationOrder {
       id: string;
       status: string;
       reason: string | null;
-      actorUserId: string;
+      actorUserId: string | null;
       createdAt: Date;
     }[];
     deliveryRequest: {

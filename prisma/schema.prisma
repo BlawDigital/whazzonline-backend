@@ -93,7 +93,8 @@ model User {
   supportMessages      SupportMessage[]            @relation("SupportMessageSender")
 
   //User shopping intrests
-  interests Interest[]
+  interests               Interest[]
+  sellerFulfillmentEvents SellerFulfillmentEvent[]
 
   @@index([email])
   @@index([phone])
@@ -481,8 +482,19 @@ model CommerceOrder {
   updatedAt   DateTime  @updatedAt
   completedAt DateTime?
 
-  userId          String
-  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  //Payment
+  paymentReference String? @unique
+  paymentStatus    String  @default("pending")
+
+  //make user id optional for guest purchase
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  guestFirstName String?
+  guestLastName  String?
+  guestEmail     String?
+  guestPhone     String?
+
   deliveryAddress String
   latitude        Float
   longitude       Float
@@ -508,8 +520,11 @@ model CommerceOrderItem {
   id        String   @id @default(uuid())
   createdAt DateTime @default(now())
 
-  orderId          String
-  order            CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId String
+  order   CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  sourceCartItemId String?
+
   productId        String
   vendorId         String
   vendorName       String
@@ -522,7 +537,7 @@ model CommerceOrderItem {
   quantity         Int
   selectedColor    String?
   selectedSize     String?
-  selectedVariants Json          @default("{}")
+  selectedVariants Json    @default("{}")
   deliveryAddress  String
 
   returnItems ReturnRequestItem[]
@@ -600,10 +615,14 @@ model SellerFulfillmentEvent {
   id            String            @id @default(uuid())
   fulfillmentId String
   fulfillment   SellerFulfillment @relation(fields: [fulfillmentId], references: [id], onDelete: Cascade)
-  status        String
-  reason        String?
-  actorUserId   String
-  createdAt     DateTime          @default(now())
+
+  status String
+  reason String?
+
+  actorUserId String?
+  actorUser   User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
 
   @@index([fulfillmentId, createdAt])
 }

@@ -5,10 +5,11 @@ import { CommerceService } from './commerce.service';
 import { SellerOrdersController } from './seller-orders.controller';
 import { SellerOrdersService } from './seller-orders.service';
 import { DeliveryProvider, MockDeliveryProvider } from './delivery.provider';
+import { GuestCheckoutController } from './guest-checkout.controller';
 
 @Module({
   exports: [SellerOrdersService],
-  controllers: [CommerceController, SellerOrdersController],
+  controllers: [CommerceController, SellerOrdersController, GuestCheckoutController],
   providers: [
     CommerceService,
     SellerOrdersService,
