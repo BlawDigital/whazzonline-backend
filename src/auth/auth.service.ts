@@ -50,7 +50,7 @@ export class AuthService {
     );
     const user = await this.prisma.user.findFirst({
       where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
-      include: { vendorProfile: { select: { setupCompleted: true } } },
+      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
     });
 
     const publicUser = user ? this.toPublicUser(user) : null;
@@ -122,7 +122,7 @@ export class AuthService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { email: normalizedEmail },
-      include: { vendorProfile: { select: { setupCompleted: true } } },
+      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
     });
     await this.prisma.emailOtp.update({
       where: { id: otpId },
@@ -164,7 +164,7 @@ export class AuthService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { phone: normalizedPhone },
-      include: { vendorProfile: { select: { setupCompleted: true } } },
+      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
     });
     await this.prisma.phoneOtp.updateMany({
       where: {
@@ -378,13 +378,13 @@ async register(registerDto: RegisterDto) {
         where: {
           email: normalizedEmail,
         },
-        include: { vendorProfile: { select: { setupCompleted: true } } },
+        include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
       })
       : await this.prisma.user.findFirst({
         where: {
           phone: { in: phoneLookupCandidates(normalizedPhone!) },
         },
-        include: { vendorProfile: { select: { setupCompleted: true } } },
+        include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
       });
 
     if (!user) {
@@ -413,7 +413,7 @@ async register(registerDto: RegisterDto) {
   async getCurrentUser(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { vendorProfile: { select: { setupCompleted: true } } },
+      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
     });
 
     if (!user) {
@@ -508,11 +508,12 @@ async register(registerDto: RegisterDto) {
   }
 
 
-  private toPublicUser<T extends {  passwordHash: unknown;  vendorProfile?: { setupCompleted: boolean } | null;},>(user: T) {
+  private toPublicUser<T extends {  passwordHash: unknown;  vendorProfile?: { setupCompleted: boolean; storeName?: string } | null;},>(user: T) {
     const { passwordHash: _passwordHash, vendorProfile, ...publicUser } = user;
     return {
       ...publicUser,
       vendorSetupCompleted: vendorProfile?.setupCompleted ?? false,
+      merchantStoreName: vendorProfile?.storeName ?? null,
     };
   }
 }

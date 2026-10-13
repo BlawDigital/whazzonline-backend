@@ -10,10 +10,16 @@ import {
   ContentDto,
   FeedDto,
   ProductReviewDto,
+  UpdateContentDto,
 } from './merchant.dto';
 import { uploadMerchantMedia } from './merchant-media';
 import { cloudinaryClient } from '../storage/cloudinary-storage';
-import { orderNotificationSelect, orderNotices, supportReplyNotice, supportReplySelect } from '../commerce/order-notifications';
+import {
+  orderNotificationSelect,
+  orderNotices,
+  supportReplyNotice,
+  supportReplySelect,
+} from '../commerce/order-notifications';
 
 @Injectable()
 export class MerchantService {
@@ -192,6 +198,64 @@ export class MerchantService {
       throw error;
     }
   }
+  async updateContent(
+    userId: string,
+    id: string,
+    dto: UpdateContentDto,
+    file?: Express.Multer.File,
+  ) {
+    const content = await this.prisma.merchantContent.findUnique({
+      where: { id },
+      include: { merchant: { select: { userId: true } } },
+    });
+    if (!content) throw new NotFoundException('Content not found.');
+    if (content.merchant.userId !== userId)
+      throw new ForbiddenException('You can only update your own content.');
+    await this.merchant(userId, true);
+    if (dto.title !== undefined && dto.title.trim().length < 2)
+      throw new BadRequestException(
+        'Add a title with at least two characters.',
+      );
+    if (
+      file &&
+      content.kind === 'SCROLL' &&
+      !file.mimetype.startsWith('video/')
+    )
+      throw new BadRequestException('SCROLL requires a video.');
+    const media = file ? await uploadMerchantMedia(file) : undefined;
+    try {
+      const updated = await this.prisma.merchantContent.update({
+        where: { id },
+        data: {
+          ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
+          ...(dto.caption !== undefined ? { caption: dto.caption.trim() } : {}),
+          ...(dto.topic !== undefined ? { topic: dto.topic } : {}),
+          ...(media
+            ? {
+                mediaUrl: media.mediaUrl,
+                mediaType: media.mediaType,
+                mediaPublicId: media.publicId,
+              }
+            : {}),
+        },
+      });
+      if (media)
+        await cloudinaryClient()
+          .uploader.destroy(content.mediaPublicId, {
+            resource_type: content.mediaType === 'VIDEO' ? 'video' : 'image',
+          })
+          .catch(() => undefined);
+      return updated;
+    } catch (error) {
+      if (media)
+        await cloudinaryClient()
+          .uploader.destroy(media.publicId, {
+            resource_type: media.resourceType,
+          })
+          .catch(() => undefined);
+      throw error;
+    }
+  }
   async removeContent(userId: string, id: string) {
     const content = await this.prisma.merchantContent.findUnique({
       where: { id },
@@ -265,8 +329,13 @@ export class MerchantService {
         select: { key: true },
       }),
       this.prisma.supportMessage.findMany({
-        where: { ticket: { ownerUserId: userId }, senderUserId: { not: userId } },
-        select: supportReplySelect, orderBy: { createdAt: 'desc' }, take: 100,
+        where: {
+          ticket: { ownerUserId: userId },
+          senderUserId: { not: userId },
+        },
+        select: supportReplySelect,
+        orderBy: { createdAt: 'desc' },
+        take: 100,
       }),
     ]);
     const keys = new Set(reads.map((row) => row.key));
@@ -283,7 +352,10 @@ export class MerchantService {
         read: false,
       })),
     ]
-      .map((notice) => ({ ...notice, read: notice.read || keys.has(notice.id) }))
+      .map((notice) => ({
+        ...notice,
+        read: notice.read || keys.has(notice.id),
+      }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     return {
       notifications: notices,
