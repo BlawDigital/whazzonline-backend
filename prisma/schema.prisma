@@ -62,7 +62,10 @@ model User {
   email        String? @unique
   passwordHash String?
 
-  phone        String?       @unique
+  phone String? @unique
+
+  productComment ProductComment[]
+
   authProvider AuthProvider?
 
   registrationType RegistrationType?
@@ -291,20 +294,21 @@ model Product {
   vendorProfileId String
   vendorProfile   VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
 
+  comments       ProductComment[]
   category       String
   mainCategory   String?
-  subCategories  String[]      @default([])
+  subCategories  String[]         @default([])
   name           String
   description    String?
-  specifications Json          @default("{}")
+  specifications Json             @default("{}")
   unitPrice      Int
   promoPrice     Int?
   promoStartsAt  DateTime?
   promoEndsAt    DateTime?
   quantity       Int
-  variants       Json          @default("[]")
+  variants       Json             @default("[]")
   imageUrls      String[]
-  status         ProductStatus @default(ACTIVE)
+  status         ProductStatus    @default(ACTIVE)
 
   cartItems CommerceCartItem[]
   likes     ProductLike[]
@@ -772,4 +776,22 @@ model ProductReview {
 
   @@unique([productId, userId])
   @@index([productId, createdAt])
+}
+
+//comments
+model ProductComment {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productId String
+  userId    String
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  content String
+
+  @@index([productId, createdAt])
+  @@index([userId, createdAt])
 }

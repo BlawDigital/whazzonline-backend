@@ -29,15 +29,22 @@ function dateListed(createdAt: Date) {
 
 @Injectable()
 export class MarketplaceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
 
   async list() {
     const [products, vendors] = await Promise.all([
       this.prisma.product.findMany({
         where: { status: 'ACTIVE', vendorProfile: { setupCompleted: true } },
         include: {
-          aisle: { select: { name: true } },
-          _count: { select: { likes: true } },
+          aisle: {
+            select: { name: true },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+            },
+          },
           vendorProfile: {
             select: {
               address: true,
@@ -96,13 +103,13 @@ export class MarketplaceService {
 
     const sales = products.length
       ? await this.prisma.commerceOrderItem.groupBy({
-          by: ['productId'],
-          where: {
-            productId: { in: products.map((product) => product.id) },
-            order: { status: 'delivered' },
-          },
-          _sum: { quantity: true },
-        })
+        by: ['productId'],
+        where: {
+          productId: { in: products.map((product) => product.id) },
+          order: { status: 'delivered' },
+        },
+        _sum: { quantity: true },
+      })
       : [];
     const salesByProduct = new Map(
       sales.map((sale) => [sale.productId, sale._sum.quantity ?? 0]),
@@ -129,7 +136,8 @@ export class MarketplaceService {
           reviewCount: ratingByProduct.get(product.id)?.count ?? 0,
           dateListed: dateListed(product.createdAt),
           id: product.id,
-          likeCount: product._count?.likes ?? 0,
+          likeCount: product._count.likes,
+          commentCount: product._count.comments,
           salesCount: salesByProduct.get(product.id) ?? 0,
           imageUri: product.imageUrls[0] ?? '',
           imageUris: product.imageUrls,
