@@ -21,6 +21,7 @@ import {
   ContentDto,
   FeedDto,
   ProductReviewDto,
+  UpdateContentDto,
 } from './merchant.dto';
 import { MerchantService } from './merchant.service';
 
@@ -68,6 +69,20 @@ export class MerchantController {
   ) {
     return this.service.createContent(req.user.sub, dto, file);
   }
+  @Patch('content/:id')
+  @UseInterceptors(
+    FileInterceptor('media', {
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+    }),
+  )
+  update(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateContentDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.service.updateContent(req.user.sub, id, dto, file);
+  }
   @Delete('content/:id') remove(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
@@ -105,6 +120,13 @@ export class MerchantController {
 @Controller('merchants')
 export class MerchantPublicController {
   constructor(private readonly service: MerchantService) {}
+  @Get('stories') stories(@Query() query: FeedDto) {
+    return this.service.feed(undefined, {
+      ...query,
+      kind: 'STORY',
+      savedOnly: 'false',
+    });
+  }
   @Get(':merchantId/content') content(
     @Param('merchantId') id: string,
     @Query() query: FeedDto,
