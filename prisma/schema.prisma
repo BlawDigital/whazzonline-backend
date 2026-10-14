@@ -72,9 +72,12 @@ model User {
 
   role UserRole @default(CUSTOMER)
 
-  isVerified    Boolean @default(false)
-  isActive      Boolean @default(true)
-  emailVerified Boolean @default(false)
+  isVerified           Boolean               @default(false)
+  isActive             Boolean               @default(true)
+  emailVerified        Boolean               @default(false)
+  referralCode         String?               @unique
+  referredBy           Referral?             @relation("Referee")
+  merchantSubscription MerchantSubscription?
 
   notificationReads    SellerNotificationRead[]
   notificationSettings SellerNotificationSettings?
@@ -142,14 +145,15 @@ model Wallet {
 }
 
 model WalletTransaction {
-  id          String                  @id @default(uuid())
-  createdAt   DateTime                @default(now())
-  walletId    String
-  wallet      Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  amount      Int
-  description String
-  type        WalletTransactionType
-  status      WalletTransactionStatus @default(COMPLETED)
+  id             String                  @id @default(uuid())
+  createdAt      DateTime                @default(now())
+  walletId       String
+  wallet         Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount         Int
+  description    String
+  type           WalletTransactionType
+  status         WalletTransactionStatus @default(COMPLETED)
+  referralReward ReferralReward?
 
   @@index([walletId, createdAt])
   @@index([status])
@@ -161,17 +165,58 @@ enum ReferralStatus {
 }
 
 model Referral {
-  id             String         @id @default(uuid())
-  createdAt      DateTime       @default(now())
+  id             String           @id @default(uuid())
+  createdAt      DateTime         @default(now())
   referrerUserId String
-  referrer       User           @relation("Referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  referrer       User             @relation("Referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
   refereeName    String
-  rewardAmount   Int            @default(500)
-  status         ReferralStatus @default(PENDING)
+  rewardAmount   Int              @default(500)
+  status         ReferralStatus   @default(PENDING)
   completedAt    DateTime?
+  refereeUserId  String?          @unique
+  referee        User?            @relation("Referee", fields: [refereeUserId], references: [id], onDelete: SetNull)
+  rewards        ReferralReward[]
 
   @@index([referrerUserId, createdAt])
   @@index([status])
+}
+
+model MerchantSubscription {
+  id             String                @id @default(uuid())
+  userId         String                @unique
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  trialStartedAt DateTime
+  trialEndsAt    DateTime
+  payments       SubscriptionPayment[]
+}
+
+model SubscriptionPayment {
+  id             String               @id @default(uuid())
+  checkoutUrl    String?
+  subscriptionId String
+  subscription   MerchantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  reference      String               @unique
+  period         Int
+  amount         Int
+  paidAt         DateTime?
+  createdAt      DateTime             @default(now())
+  reward         ReferralReward?
+
+  @@unique([subscriptionId, period])
+}
+
+model ReferralReward {
+  id            String              @id @default(uuid())
+  createdAt     DateTime            @default(now())
+  referralId    String
+  referral      Referral            @relation(fields: [referralId], references: [id], onDelete: Restrict)
+  paymentId     String              @unique
+  payment       SubscriptionPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  transactionId String              @unique
+  transaction   WalletTransaction   @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  amount        Int
+
+  @@index([referralId, createdAt])
 }
 
 model PhoneOtp {

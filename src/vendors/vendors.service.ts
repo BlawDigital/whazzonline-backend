@@ -1,3 +1,4 @@
+import { addMonths } from '../referrals/merchant-billing.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -894,7 +895,7 @@ export class VendorsService {
       );
     }
 
-    const submittedAt = new Date();
+    const submittedAt = existing.submittedAt ?? new Date();
     const representativeName = dto.representativeName?.trim() || '';
     if (representativeName.length < 2) throw new BadRequestException('Add a named CEO or authorized representative in About before submitting.');
     return this.prisma.vendorProfile.update({
@@ -907,6 +908,7 @@ export class VendorsService {
         setupCompleted: true,
         submittedAt,
         termsAcceptedAt: submittedAt,
+        user: { update: { merchantSubscription: { upsert: { create: { trialStartedAt: submittedAt, trialEndsAt: addMonths(submittedAt, 1) }, update: {} } } } },
       },
     });
   }
