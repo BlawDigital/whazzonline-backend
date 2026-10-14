@@ -68,7 +68,10 @@ export class VendorsService {
 
     const [orderItems, wallet] = await Promise.all([
       this.prisma.commerceOrderItem.findMany({
-        where: { vendorId: userId, order: { status: 'delivered' } },
+        where: {
+          vendorId: userId,
+          order: { paymentStatus: 'paid', invoices: { none: {} } },
+        },
         select: {
           createdAt: true,
           id: true,
@@ -84,8 +87,7 @@ export class VendorsService {
           accountName:
             [user.firstName, user.lastName].filter(Boolean).join(' ') ||
             profile.storeName,
-          accountNumber: `019${userId.replace(/-/g, '').slice(0, 7)}`,
-          bankName: 'Paystack - Titan',
+
           userId,
         },
         update: {},
@@ -103,16 +105,26 @@ export class VendorsService {
 
   async finance(userId: string) {
     const { orderItems, profile, wallet } = await this.financeData(userId);
-    const sales = orderItems.map((item) => ({
-      amount: item.unitPrice * item.quantity,
-      createdAt: item.createdAt,
-      id: item.id,
-      orderId: item.orderId,
-    }));
+    const directInvoices = await this.prisma.goodsInvoice.findMany({
+      where: { vendorId: userId, status: 'PAID' },
+      select: { id: true, subtotal: true, paidAt: true, orderId: true },
+    });
+    const sales = [
+      ...orderItems.map((item) => ({
+        amount: item.unitPrice * item.quantity,
+        createdAt: item.createdAt,
+        id: item.id,
+        orderId: item.orderId,
+      })),
+      ...directInvoices.map((invoice) => ({
+        amount: invoice.subtotal,
+        createdAt: invoice.paidAt!,
+        id: invoice.id,
+        orderId: invoice.orderId,
+      })),
+    ];
     const grossSales = sales.reduce((sum, sale) => sum + sale.amount, 0);
-    const platformFees = Math.round(
-      grossSales * (vendorFinanceConfig.platformFeePercent / 100),
-    );
+    const platformFees = 0;
     const netEarnings = grossSales - platformFees;
     const completedPayouts = wallet.transactions
       .filter((item) => item.status === 'COMPLETED')
@@ -120,20 +132,8 @@ export class VendorsService {
     const pendingPayouts = wallet.transactions
       .filter((item) => item.status === 'PENDING')
       .reduce((sum, item) => sum + Math.abs(item.amount), 0);
-    const availableBalance = Math.max(
-      netEarnings - completedPayouts - pendingPayouts,
-      0,
-    );
-    const fees = sales.map((sale) => ({
-      amount: -Math.round(
-        sale.amount * (vendorFinanceConfig.platformFeePercent / 100),
-      ),
-      createdAt: sale.createdAt.toISOString(),
-      description: 'Platform Service Fee',
-      id: `fee-${sale.id}`,
-      orderId: sale.orderId,
-      type: 'FEE' as const,
-    }));
+    const availableBalance = 0;
+    const fees: typeof saleTransactions = [];
     const saleTransactions = sales.map((sale) => ({
       amount: sale.amount,
       createdAt: sale.createdAt.toISOString(),
@@ -189,7 +189,8 @@ export class VendorsService {
       minimumWithdrawalAmount: vendorFinanceConfig.minimumWithdrawalAmount,
       netEarnings,
       pendingPayouts,
-      platformFeePercent: vendorFinanceConfig.platformFeePercent,
+      paymentModel: 'direct_to_merchant',
+      platformFeePercent: 0,
       platformFees,
       payouts,
       recentEarnings: saleTransactions.slice(0, 5),
@@ -199,29 +200,12 @@ export class VendorsService {
     };
   }
 
-  async requestWithdrawal(userId: string, amount: number) {
-    const data = await this.finance(userId);
-    if (!data.bankAccount.accountNumber || !data.bankAccount.bankName) {
-      throw new BadRequestException(
-        'Add and verify a bank account before withdrawing funds.',
-      );
-    }
-    if (amount > data.availableBalance) {
-      throw new BadRequestException('Withdrawal exceeds available balance.');
-    }
-    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet) throw new NotFoundException('Vendor wallet not found.');
-    return this.prisma.walletTransaction.create({
-      data: {
-        amount: -amount,
-        description: 'Withdrawal to Bank',
-        status: 'PENDING',
-        type: 'WITHDRAWAL',
-        walletId: wallet.id,
-      },
-    });
+  async requestWithdrawal(userId: string, _amount: number) {
+    await this.requireVendorUser(userId);
+    throw new BadRequestException(
+      'Goods payments settle directly to your merchant account. There is no Whazzonline goods balance to withdraw.',
+    );
   }
-
   async findProfile(userId: string) {
     await this.requireVendorUser(userId);
     const profile = await this.prisma.vendorProfile.findUnique({
@@ -241,9 +225,14 @@ export class VendorsService {
         products: {
           ...(manage ? {} : { where: { status: 'ACTIVE' as const } }),
           orderBy: { createdAt: 'desc' },
-          include: { aisle: { select: { name: true } }, _count: { select: { likes: true } } },
+          include: {
+            aisle: { select: { name: true } },
+            _count: { select: { likes: true } },
+          },
         },
-        user: { select: { avatarUrl: true, registrationType: true, role: true } },
+        user: {
+          select: { avatarUrl: true, registrationType: true, role: true },
+        },
         trustReviews: {
           orderBy: { createdAt: 'desc' },
           select: {
@@ -304,7 +293,8 @@ export class VendorsService {
         bankName: undefined,
         cacUrl: undefined,
         avatarUrl: user.avatarUrl,
-        isBusiness: user.registrationType === 'BUSINESS' || user.role === 'BUSINESS',
+        isBusiness:
+          user.registrationType === 'BUSINESS' || user.role === 'BUSINESS',
         trustReviewCount: _count.trustReviews,
         trusteeCount: trustees.length,
         trustReviews: trustReviews.map((review) => ({
@@ -777,7 +767,13 @@ export class VendorsService {
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
-    if (dto.representativeName !== undefined && dto.representativeName.trim().length < 2) throw new BadRequestException('A named CEO or authorized representative is required.');
+    if (
+      dto.representativeName !== undefined &&
+      dto.representativeName.trim().length < 2
+    )
+      throw new BadRequestException(
+        'A named CEO or authorized representative is required.',
+      );
     if (dto.featuredProductId) {
       const product = await this.prisma.product.findFirst({
         where: {
@@ -791,7 +787,16 @@ export class VendorsService {
           'Choose an active product from your own store.',
         );
     }
-    return this.prisma.vendorProfile.update({ where: { userId }, data: { ...dto, socialLinks: dto.socialLinks?.map(link => ({ label: link.label.trim(), url: link.url })) } });
+    return this.prisma.vendorProfile.update({
+      where: { userId },
+      data: {
+        ...dto,
+        socialLinks: dto.socialLinks?.map((link) => ({
+          label: link.label.trim(),
+          url: link.url,
+        })),
+      },
+    });
   }
 
   async saveProfile(userId: string, dto: SaveVendorProfileDto) {
@@ -897,7 +902,10 @@ export class VendorsService {
 
     const submittedAt = existing.submittedAt ?? new Date();
     const representativeName = dto.representativeName?.trim() || '';
-    if (representativeName.length < 2) throw new BadRequestException('Add a named CEO or authorized representative in About before submitting.');
+    if (representativeName.length < 2)
+      throw new BadRequestException(
+        'Add a named CEO or authorized representative in About before submitting.',
+      );
     return this.prisma.vendorProfile.update({
       where: { userId },
       data: {
@@ -908,7 +916,19 @@ export class VendorsService {
         setupCompleted: true,
         submittedAt,
         termsAcceptedAt: submittedAt,
-        user: { update: { merchantSubscription: { upsert: { create: { trialStartedAt: submittedAt, trialEndsAt: addMonths(submittedAt, 1) }, update: {} } } } },
+        user: {
+          update: {
+            merchantSubscription: {
+              upsert: {
+                create: {
+                  trialStartedAt: submittedAt,
+                  trialEndsAt: addMonths(submittedAt, 1),
+                },
+                update: {},
+              },
+            },
+          },
+        },
       },
     });
   }

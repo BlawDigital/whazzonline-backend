@@ -1,3 +1,4 @@
+import { GoodsInvoicesService } from '../invoices/goods-invoices.service';
 import { BadRequestException } from '@nestjs/common';
 
 jest.mock('prisma/prisma.service', () => ({
@@ -121,6 +122,7 @@ describe('CommerceService trust reviews', () => {
           status: 'ACTIVE',
           unitPrice: 12_000_000,
           vendorProfile: {
+            user: { isActive: true },
             setupCompleted: true,
             storeName: 'Vendor',
             userId: 'vendor-id',
@@ -128,46 +130,44 @@ describe('CommerceService trust reviews', () => {
         },
       },
     ]);
-    prisma.commerceOrder.create.mockResolvedValue({
-      id: 'order-id',
-      total: 24_000_019,
-    });
-
+    const invoiceService = {
+      resume: jest.fn().mockResolvedValue(null),
+      createCheckout: jest.fn().mockResolvedValue({
+        id: 'order-id',
+        paymentStatus: 'pending',
+        total: 24000000,
+        invoices: [],
+      }),
+    };
+    const checkoutService = new CommerceService(
+      prisma as never,
+      invoiceService as unknown as GoodsInvoicesService,
+    );
     await expect(
-      service.checkout('buyer-id', {
+      checkoutService.checkout('buyer-id', {
         address: { label: 'Ikeja, Lagos', latitude: 6.6, longitude: 3.35 },
         itemCount: 999,
         cartSelection: [{ cartItemId: 'cart-item-id', quantity: 2 }],
-        paymentMethod: 'wallet',
+        paymentMethod: 'bank',
       }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       id: 'order-id',
-      paymentStatus: 'simulated',
-      total: 24_000_019,
+      paymentStatus: 'pending',
+      total: 24000000,
     });
-    expect(prisma.commerceOrder.create).toHaveBeenCalledWith(
+    expect(invoiceService.createCheckout).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({
-          subtotal: 24_000_000,
-          items: {
-            create: [expect.objectContaining({ quantity: 2 })],
-          },
-        }),
+        deliveryFee: 0,
+        lines: [
+          expect.objectContaining({
+            quantity: 2,
+            unitPrice: 12000000,
+            vendorId: 'vendor-id',
+          }),
+        ],
       }),
     );
-    expect(prisma.commerceCartItem.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ['cart-item-id'] }, userId: 'buyer-id' },
-    });
-    expect(prisma.sellerFulfillment.create).toHaveBeenCalledWith({
-      data: {
-        history: { create: { actorUserId: 'buyer-id', status: 'pending' } },
-        orderId: 'order-id',
-        status: 'pending',
-        vendorId: 'vendor-id',
-      },
-    });
   });
-
   it('persists one trust reason for a delivered vendor order', async () => {
     prisma.commerceOrder.findFirst.mockResolvedValue({
       id: 'order-id',

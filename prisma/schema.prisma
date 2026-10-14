@@ -294,13 +294,15 @@ model VendorProfile {
 
   featuredProductId String?
 
-  products      Product[]
-  categories    VendorCategory[]
-  trustReviews  VendorTrustReview[]
-  offers        Offer[]
-  conversations Conversation[]
-  contacts      MerchantContact[]
-  content       MerchantContent[]
+  products           Product[]
+  categories         VendorCategory[]
+  trustReviews       VendorTrustReview[]
+  offers             Offer[]
+  conversations      Conversation[]
+  paymentConnections MerchantPaymentConnection[]
+  invoices           GoodsInvoice[]
+  contacts           MerchantContact[]
+  content            MerchantContent[]
 
   @@index([category])
   @@index([state, city])
@@ -477,6 +479,8 @@ model ChatMessage {
   kind            ChatMessageKind
   text            String?
   imageUri        String?
+  invoiceId       String?
+  invoice         GoodsInvoice?   @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   productContext  Json?
 
   @@unique([conversationId, clientMessageId])
@@ -554,12 +558,15 @@ model CommerceOrder {
   deliveryFee     Int
   total           Int
 
-  items          CommerceOrderItem[]
-  issues         OrderIssue[]
-  returnRequests ReturnRequest[]
-  trustReviews   VendorTrustReview[]
-  fulfillments   SellerFulfillment[]
-  supportTickets SupportTicket[]
+  items                 CommerceOrderItem[]
+  issues                OrderIssue[]
+  returnRequests        ReturnRequest[]
+  trustReviews          VendorTrustReview[]
+  fulfillments          SellerFulfillment[]
+  invoices              GoodsInvoice[]
+  checkoutKey           String?             @unique
+  guestInvoiceTokenHash String?
+  supportTickets        SupportTicket[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -821,6 +828,69 @@ model ProductReview {
 
   @@unique([productId, userId])
   @@index([productId, createdAt])
+}
+
+model MerchantPaymentConnection {
+  id              String         @id @default(uuid())
+  vendorProfileId String
+  vendorProfile   VendorProfile  @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  encryptedKey    String
+  enabled         Boolean        @default(true)
+  mode            String
+  createdAt       DateTime       @default(now())
+  invoices        GoodsInvoice[]
+
+  @@index([vendorProfileId, enabled])
+}
+
+model GoodsInvoice {
+  id                    String                     @id @default(uuid())
+  number                String                     @unique
+  orderId               String
+  order                 CommerceOrder              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  vendorId              String
+  vendorProfileId       String
+  vendorProfile         VendorProfile              @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  bank                  Json
+  subtotal              Int
+  deliveryFee           Int
+  total                 Int
+  status                String                     @default("OPEN")
+  paymentMethod         String                     @default("bank")
+  createdAt             DateTime                   @default(now())
+  expiresAt             DateTime
+  paidAt                DateTime?
+  paymentIssue          String?
+  receiptNumber         String?                    @unique
+  confirmationReference String?
+  confirmedBy           String?
+  checkoutReference     String?                    @unique
+  checkoutEmail         String?
+  checkoutUrl           String?
+  connectionId          String?
+  connection            MerchantPaymentConnection? @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  messages              ChatMessage[]
+  reports               InvoiceTransferReport[]
+
+  @@unique([orderId, vendorId])
+  @@index([vendorId, status, createdAt])
+  @@index([status, expiresAt])
+}
+
+model InvoiceTransferReport {
+  id         String       @id @default(uuid())
+  invoiceId  String
+  invoice    GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  requestId  String
+  reference  String
+  note       String?
+  status     String       @default("PENDING")
+  createdAt  DateTime     @default(now())
+  reviewedAt DateTime?
+  reviewNote String?
+
+  @@unique([invoiceId, requestId])
+  @@index([invoiceId, status])
 }
 
 //comments

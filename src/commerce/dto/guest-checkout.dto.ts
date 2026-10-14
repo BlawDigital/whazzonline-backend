@@ -1,3 +1,4 @@
+import { IsUUID, Matches } from 'class-validator';
 
 import { Type } from 'class-transformer';
 import {
@@ -47,6 +48,8 @@ class GuestCheckoutItemDto {
 }
 
 export class GuestCheckoutDto {
+  @IsOptional() @IsUUID() idempotencyKey?: string;
+  @IsOptional() @Matches(/^[a-f0-9]{64}$/) guestAccessToken?: string;
   @IsString()
   firstName!: string;
 
@@ -63,7 +66,7 @@ export class GuestCheckoutDto {
   @Type(() => GuestDeliveryAddressDto)
   address!: GuestDeliveryAddressDto;
 
-  @IsIn(['card', 'bank'])
+  @IsIn(['card', 'bank', 'pay_on_delivery'])
   paymentMethod!: string;
 
   @IsArray()

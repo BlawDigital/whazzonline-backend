@@ -1,8 +1,7 @@
+import { GoodsInvoicesService } from '../invoices/goods-invoices.service';
 import {
-  BadGatewayException,
   BadRequestException,
   Injectable,
-  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 
@@ -14,9 +13,10 @@ import { CreateReturnDto } from './dto/create-return.dto';
 import { CreateTrustReviewDto } from './dto/create-trust-review.dto';
 import { ReportOrderIssueDto } from './dto/report-order-issue.dto';
 import { GuestCheckoutDto } from './dto/guest-checkout.dto';
-import * as crypto from 'node:crypto';
-const SERVICE_FEE = 6;
-const DELIVERY_FEE = 13;
+
+const SERVICE_FEE = 0;
+// Delivery charges will now need to be agreed on the merchant invoice side; no platform shipping charge for now.
+const DELIVERY_FEE = 0;
 
 function sameVariants(left: unknown, right: unknown) {
   return JSON.stringify(left ?? {}) === JSON.stringify(right ?? {});
@@ -39,7 +39,12 @@ function activePromoPrice(product: {
 
 @Injectable()
 export class CommerceService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly invoices: GoodsInvoicesService = new GoodsInvoicesService(
+      prisma,
+    ),
+  ) {}
 
   private mapItem(item: {
     id: string;
@@ -88,6 +93,13 @@ export class CommerceService {
     deliveryFee: number;
     total: number;
     items: Parameters<CommerceService['mapItem']>[0][];
+    invoices?: {
+      id: string;
+      number: string;
+      vendorId: string;
+      status: string;
+      total: number;
+    }[];
     issues: { id: string }[];
     returnRequests: { id: string }[];
     trustReviews: { vendorProfile: { userId: string } }[];
@@ -97,6 +109,7 @@ export class CommerceService {
       createdAt: order.createdAt.toISOString(),
       deliveryAddress: order.deliveryAddress,
       id: order.id,
+      invoices: order.invoices ?? [],
       issueStatus: order.issues.length ? ('reported' as const) : undefined,
       items: order.items.map((item) => this.mapItem(item)),
       paymentSummary: {
@@ -126,6 +139,15 @@ export class CommerceService {
         where: { userId },
         include: {
           items: true,
+          invoices: {
+            select: {
+              id: true,
+              number: true,
+              vendorId: true,
+              status: true,
+              total: true,
+            },
+          },
           issues: { select: { id: true } },
           returnRequests: { select: { id: true } },
           trustReviews: {
@@ -194,9 +216,9 @@ export class CommerceService {
     };
     const item = existing
       ? await this.prisma.commerceCartItem.update({
-        where: { id: existing.id },
-        data,
-      })
+          where: { id: existing.id },
+          data,
+        })
       : await this.prisma.commerceCartItem.create({ data });
     return this.mapItem(item);
   }
@@ -225,9 +247,9 @@ export class CommerceService {
     return { id };
   }
 
-
-
   async checkout(userId: string, dto: CheckoutDto) {
+    const resumed = await this.invoices.resume(userId, dto.idempotencyKey);
+    if (resumed) return resumed;
     const requestedItems = dto.cartSelection ?? [];
     const requestedIds = requestedItems.map((item) => item.cartItemId);
 
@@ -238,18 +260,6 @@ export class CommerceService {
     }
 
     const isPayOnDelivery = dto.paymentMethod === 'pay_on_delivery';
-
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { email: true },
-    });
-
-    if (!isPayOnDelivery && !user?.email) {
-      throw new BadRequestException(
-        'A valid email address is required to make payment.',
-      );
-    }
-
 
     const cartItems = await this.prisma.commerceCartItem.findMany({
       where: {
@@ -282,27 +292,24 @@ export class CommerceService {
 
     const selectedItems = requestedItems.length
       ? requestedItems.map((requested) => {
-        const cartItem = cartById.get(requested.cartItemId);
+          const cartItem = cartById.get(requested.cartItemId);
 
-        if (!cartItem) {
-          throw new BadRequestException(
-            'A selected cart item is no longer available.',
-          );
-        }
+          if (!cartItem) {
+            throw new BadRequestException(
+              'A selected cart item is no longer available.',
+            );
+          }
 
-        if (
-          !Number.isInteger(requested.quantity) ||
-          requested.quantity < 1
-        ) {
-          throw new BadRequestException('Invalid item quantity.');
-        }
+          if (!Number.isInteger(requested.quantity) || requested.quantity < 1) {
+            throw new BadRequestException('Invalid item quantity.');
+          }
 
-        return { cartItem, quantity: requested.quantity };
-      })
+          return { cartItem, quantity: requested.quantity };
+        })
       : cartItems.map((cartItem) => ({
-        cartItem,
-        quantity: cartItem.quantity,
-      }));
+          cartItem,
+          quantity: cartItem.quantity,
+        }));
 
     const orderItems = selectedItems.map(({ cartItem, quantity }) => {
       const product = cartItem.product;
@@ -316,12 +323,6 @@ export class CommerceService {
           `${product.name || 'A product'} is no longer available.`,
         );
       }
-      console.log('Checkout stock check:', {
-        product: product.name,
-        productId: product.id,
-        requestedQuantity: quantity,
-        availableStock: product.quantity,
-      });
 
       if (quantity > product.quantity) {
         throw new BadRequestException(
@@ -330,7 +331,6 @@ export class CommerceService {
       }
 
       const promoPrice = activePromoPrice(product);
-
 
       return {
         sourceCartItemId: cartItem.id,
@@ -355,115 +355,15 @@ export class CommerceService {
       throw new BadRequestException('Your cart is empty.');
     }
 
-    const subtotal = orderItems.reduce(
-      (sum, item) => sum + item.unitPrice * item.quantity,
-      0,
-    );
-    const total = subtotal + SERVICE_FEE + DELIVERY_FEE;
-    const reference = `WHZ-${crypto.randomUUID()}`;
-
-
-    const order = await this.prisma.$transaction(async (transaction) => {
-      const createdOrder = await transaction.commerceOrder.create({
-        data: {
-          deliveryAddress: dto.address.label,
-          deliveryFee: DELIVERY_FEE,
-          latitude: dto.address.latitude,
-          longitude: dto.address.longitude,
-          paymentMethod: dto.paymentMethod,
-          serviceFee: SERVICE_FEE,
-          subtotal,
-          total,
-          userId,
-          status: isPayOnDelivery ? 'confirmed' : 'pending_payment',
-          paymentStatus: 'pending',
-          paymentReference: reference,
-          items: {
-            create: orderItems,
-          },
-        },
-        include: {
-          items: true,
-        },
-      });
-
-      if (isPayOnDelivery) {
-        // Create one fulfillment per seller.
-        const vendorIds = [
-          ...new Set(createdOrder.items.map((item) => item.vendorId)),
-        ];
-
-        for (const vendorId of vendorIds) {
-          await transaction.sellerFulfillment.upsert({
-            where: {
-              orderId_vendorId: {
-                orderId: createdOrder.id,
-                vendorId,
-              },
-            },
-            create: {
-              orderId: createdOrder.id,
-              vendorId,
-              status: 'pending',
-              history: {
-                create: {
-                  status: 'pending',
-                  actorUserId: userId,
-                },
-              },
-            },
-            update: {},
-          });
-        }
-
-        // Remove only the cart items included in this order.
-        const sourceCartItemIds = createdOrder.items
-          .map((item) => item.sourceCartItemId)
-          .filter((id): id is string => id !== null);
-
-        if (sourceCartItemIds.length > 0) {
-          await transaction.commerceCartItem.deleteMany({
-            where: {
-              userId,
-              id: { in: sourceCartItemIds },
-            },
-          });
-        }
-      }
-
-      return createdOrder;
-    });
-
-    if (isPayOnDelivery) {
-      return {
-        id: order.id,
-        paymentStatus: 'pending',
-        paymentMethod: 'pay_on_delivery',
-        total: order.total,
-        reference,
-        authorizationUrl: null,
-      };
-    }
-
-
-    const payment = await this.initializePaystackPayment({
-      email: user!.email!,
-      amount: order.total,
-      reference,
-      orderId: order.id,
-    });
-
-    return {
-      id: order.id,
-      paymentStatus: 'pending',
+    return this.invoices.createCheckout({
+      userId,
+      address: dto.address,
       paymentMethod: dto.paymentMethod,
-      total: order.total,
-      reference: payment.reference,
-      authorizationUrl: payment.authorizationUrl,
-    };
-
+      lines: orderItems,
+      deliveryFee: DELIVERY_FEE,
+      idempotencyKey: dto.idempotencyKey,
+    });
   }
-
   async productLikes(userId: string) {
     const likes = await this.prisma.productLike.findMany({
       where: { userId },
@@ -673,9 +573,15 @@ export class CommerceService {
 
   //Guest checkout
   async guestCheckout(dto: GuestCheckoutDto) {
+    const resumed = await this.invoices.resume(
+      undefined,
+      dto.idempotencyKey,
+      dto.guestAccessToken,
+    );
+    if (resumed) return resumed;
     const requestedIds = dto.items.map((item) => item.productId);
     if (new Set(requestedIds).size !== requestedIds.length) {
-      throw new BadRequestException('A product was submitted more than once',);
+      throw new BadRequestException('A product was submitted more than once');
     }
     const products = await this.prisma.product.findMany({
       where: { id: { in: requestedIds } },
@@ -689,23 +595,32 @@ export class CommerceService {
           },
         },
       },
-
     });
     if (products.length !== requestedIds.length) {
-      throw new BadRequestException('One of the products is no longer available.',);
+      throw new BadRequestException(
+        'One of the products is no longer available.',
+      );
     }
-    const productById = new Map(products.map((product) => [product.id, product]));
-
+    const productById = new Map(
+      products.map((product) => [product.id, product]),
+    );
 
     const orderItems = dto.items.map((requested) => {
       const product = productById.get(requested.productId)!;
 
-
-      if (product.status !== 'ACTIVE' || !product.vendorProfile.setupCompleted || !product.vendorProfile.user.isActive) {
-        throw new NotFoundException(`${product.name || 'A product'} is no longer available.`,);
+      if (
+        product.status !== 'ACTIVE' ||
+        !product.vendorProfile.setupCompleted ||
+        !product.vendorProfile.user.isActive
+      ) {
+        throw new NotFoundException(
+          `${product.name || 'A product'} is no longer available.`,
+        );
       }
       if (requested.quantity > product.quantity) {
-        throw new BadRequestException(`${product.name} does not have enough stock.`,);
+        throw new BadRequestException(
+          `${product.name} does not have enough stock.`,
+        );
       }
       const promoPrice = activePromoPrice(product);
 
@@ -726,305 +641,34 @@ export class CommerceService {
         vendorName: product.vendorProfile.storeName,
       };
     });
-    const subtotal = orderItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0,);
-
-    const total = subtotal + SERVICE_FEE + DELIVERY_FEE;
-    const reference = `WHZ-${crypto.randomUUID()}`;
-
-    const isPayOnDelivery = dto.paymentMethod === 'pay_on_delivery';
-
-    const order = await this.prisma.$transaction(async (transaction) => {
-      const createdOrder = await transaction.commerceOrder.create({
-        data: {
-          guestFirstName: dto.firstName.trim(),
-          guestLastName: dto.lastName.trim(),
-          guestEmail: dto.email.trim().toLowerCase(),
-          guestPhone: dto.phone.trim(),
-          deliveryAddress: dto.address.label,
-          latitude: dto.address.latitude,
-          longitude: dto.address.longitude,
-          paymentMethod: dto.paymentMethod,
-          serviceFee: SERVICE_FEE,
-          deliveryFee: DELIVERY_FEE,
-          subtotal,
-          total,
-          status: isPayOnDelivery ? 'confirmed' : 'pending_payment',
-          paymentStatus: 'pending',
-          paymentReference: reference,
-          items: {
-            create: orderItems,
-          },
-        },
-        include: {
-          items: true,
-        },
-      });
-
-      if (isPayOnDelivery) {
-        const vendorIds = [
-          ...new Set(createdOrder.items.map((item) => item.vendorId)),
-        ];
-
-        for (const vendorId of vendorIds) {
-          await transaction.sellerFulfillment.upsert({
-            where: {
-              orderId_vendorId: {
-                orderId: createdOrder.id,
-                vendorId,
-              },
-            },
-            create: {
-              orderId: createdOrder.id,
-              vendorId,
-              status: 'pending',
-              history: {
-                create: {
-                  status: 'pending',
-                  actorUserId: null,
-                },
-              },
-            },
-            update: {},
-          });
-        }
-      }
-
-      return createdOrder;
-    });
-
-    if (isPayOnDelivery) {
-      return {
-        id: order.id,
-        paymentStatus: 'pending',
-        paymentMethod: 'pay_on_delivery',
-        total: order.total,
-        reference,
-        authorizationUrl: null,
-      };
-    }
-
-
-
-    if (dto.paymentMethod === 'pay_on_delivery') {
-      return {
-        id: order.id,
-        paymentStatus: 'pending',
-        paymentMethod: 'pay_on_delivery',
-        total: order.total,
-        reference,
-        authorizationUrl: null,
-      };
-    }
-
-    const payment = await this.initializePaystackPayment({
-      email: order.guestEmail!,
-      amount: order.total,
-      reference,
-      orderId: order.id,
-    });
-
-    return {
-      id: order.id,
-      paymentStatus: 'pending',
-      paymentMethod: dto.paymentMethod,
-      total: order.total,
-      reference: payment.reference,
-      authorizationUrl: payment.authorizationUrl,
-    };
-
-
-  }
-
-  private async initializePaystackPayment(params: { email: string, amount: number; reference: string; orderId: string; }) {
-    const secretKey = process.env.PAYSTACK_SECRET_KEY;
-    const frontendUrl = process.env.FRONTEND_URL;
-
-    if (!secretKey || !frontendUrl) {
-      throw new InternalServerErrorException('Payment configuration is missing.',);
-    }
-    const response = await fetch('https://api.paystack.co/transaction/initialize',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${secretKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: params.email,
-          amount: String(params.amount * 100),
-          currency: 'NGN',
-          reference: params.reference,
-          callback_url: `${frontendUrl}/checkout/payment/callback`,
-          metadata: {
-            orderId: params.orderId,
-          },
-        }),
+    return this.invoices.createCheckout({
+      guest: {
+        firstName: dto.firstName.trim(),
+        lastName: dto.lastName.trim(),
+        email: dto.email.trim().toLowerCase(),
+        phone: dto.phone.trim(),
       },
-
-    );
-    const result = await response.json();
-    if (!response.ok || !result.status || !result.data?.authorization_url) {
-
-      throw new InternalServerErrorException('Unable to initialize payment wiyth Paystack');
-    }
-
-    return {
-      authorizationUrl: result.data.authorization_url as string,
-      reference: result.data.reference as string,
-    };
+      guestAccessToken: dto.guestAccessToken,
+      idempotencyKey: dto.idempotencyKey,
+      address: dto.address,
+      paymentMethod: dto.paymentMethod,
+      lines: orderItems,
+      deliveryFee: DELIVERY_FEE,
+    });
   }
-
-
   async verifyPaystackPayment(reference: string) {
-    const secretKey = process.env.PAYSTACK_SECRET_KEY;
-
-    if (!secretKey) {
-      throw new InternalServerErrorException(
-        'Payment configuration is missing.',
-      );
-    }
-
     const order = await this.prisma.commerceOrder.findUnique({
       where: { paymentReference: reference },
-      include: {
-        items: true,
-        fulfillments: true,
-      },
     });
-
-    if (!order) {
-      throw new NotFoundException('Order not found.');
-    }
-
-    // A repeated callback must not process the order again.
-    if (order.paymentStatus === 'paid') {
+    if (order?.paymentStatus === 'paid')
       return {
         id: order.id,
         paymentStatus: 'paid',
         status: order.status,
         total: order.total,
       };
-    }
-
-    const response = await fetch(
-      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
-      {
-        headers: {
-          Authorization: `Bearer ${secretKey}`,
-        },
-      },
+    throw new BadRequestException(
+      'Goods payments must use the merchant invoice. Whazzonline goods checkout is no longer available.',
     );
-
-    if (!response.ok) {
-      throw new BadGatewayException(
-        'Unable to verify payment with Paystack.',
-      );
-    }
-
-    const result = await response.json();
-    const transaction = result.data;
-
-    if (
-      !result.status ||
-      transaction?.status !== 'success' ||
-      transaction.reference !== order.paymentReference ||
-      transaction.amount !== order.total * 100 ||
-      transaction.currency !== 'NGN'
-    ) {
-      throw new BadRequestException(
-        'Payment has not been successfully verified.',
-      );
-    }
-
-    // The payment has been verified. We will complete the
-    // order-processing transaction after checking your
-    // SellerFulfillment schema in the next step.
-    const updatedOrder = await this.prisma.$transaction(
-      async (transaction) => {
-        const currentOrder =
-          await transaction.commerceOrder.findUnique({
-            where: { id: order.id },
-            include: {
-              items: true,
-            },
-          });
-
-        if (!currentOrder) {
-          throw new NotFoundException('Order not found.');
-        }
-
-        // Another callback may already have completed this order.
-        if (currentOrder.paymentStatus === 'paid') {
-          return currentOrder;
-        }
-
-        const paidOrder =
-          await transaction.commerceOrder.update({
-            where: { id: currentOrder.id },
-            data: {
-              paymentStatus: 'paid',
-              status: 'confirmed',
-            },
-          });
-
-        const vendorIds = [
-          ...new Set(
-            currentOrder.items.map((item) => item.vendorId),
-          ),
-        ];
-        if (currentOrder.userId) {
-          const sourceCartItemIds = currentOrder.items
-            .map((item) => item.sourceCartItemId)
-            .filter((id): id is string => id !== null);
-
-          if (sourceCartItemIds.length > 0) {
-            await transaction.commerceCartItem.deleteMany({
-              where: {
-                userId: currentOrder.userId,
-                id: { in: sourceCartItemIds },
-              },
-            });
-          }
-        }
-
-        for (const vendorId of vendorIds) {
-          await transaction.sellerFulfillment.upsert({
-            where: {
-              orderId_vendorId: {
-                orderId: currentOrder.id,
-                vendorId,
-              },
-            },
-            create: {
-              orderId: currentOrder.id,
-              vendorId,
-              status: 'pending',
-              history: {
-                create: {
-                  status: 'pending',
-                  actorUserId: currentOrder.userId,
-                },
-              },
-            },
-            update: {},
-          });
-        }
-
-        return paidOrder;
-      },
-    );
-
-    return {
-      id: updatedOrder.id,
-      paymentStatus: updatedOrder.paymentStatus,
-      status: updatedOrder.status,
-      total: updatedOrder.total,
-    };
   }
-
-
-
-
-
 }
-

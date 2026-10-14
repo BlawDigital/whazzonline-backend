@@ -12,6 +12,7 @@ import { VendorsService } from './vendors.service';
 
 describe('VendorsService', () => {
   const prisma = {
+    goodsInvoice: { findMany: jest.fn().mockResolvedValue([]) },
     commerceOrderItem: {
       findMany: jest.fn(),
       groupBy: jest.fn().mockResolvedValue([]),
@@ -137,12 +138,12 @@ describe('VendorsService', () => {
     });
 
     await expect(service.finance('vendor-id')).resolves.toMatchObject({
-      availableBalance: 8000,
+      availableBalance: 0,
       completedPayouts: 1000,
       grossSales: 10000,
       minimumWithdrawalAmount: 100,
-      netEarnings: 9000,
-      platformFees: 1000,
+      netEarnings: 10000,
+      platformFees: 0,
       totalSales: 10000,
     });
   });
@@ -154,7 +155,7 @@ describe('VendorsService', () => {
     } as never);
 
     await expect(service.requestWithdrawal('vendor-id', 600)).rejects.toThrow(
-      'Withdrawal exceeds available balance.',
+      'Goods payments settle directly',
     );
     expect(prisma.walletTransaction.create).not.toHaveBeenCalled();
   });
@@ -277,8 +278,8 @@ describe('VendorsService', () => {
       service.submitProfile('vendor-id', {
         sellerType: 'RETAILER',
         termsAccepted: true,
-      representativeName: "Ada Vendor",
-      representativeRole: "CEO",
+        representativeName: 'Ada Vendor',
+        representativeRole: 'CEO',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -305,12 +306,17 @@ describe('VendorsService', () => {
     await service.submitProfile('vendor-id', {
       sellerType: 'BOTH',
       termsAccepted: true,
-      representativeName: "Ada Vendor",
-      representativeRole: "CEO",
+      representativeName: 'Ada Vendor',
+      representativeRole: 'CEO',
     });
 
     expect(prisma.vendorProfile.update).toHaveBeenCalledWith({
       data: {
+        user: expect.objectContaining({
+          update: expect.objectContaining({
+            merchantSubscription: expect.any(Object),
+          }),
+        }),
         reviewStatus: 'PENDING',
         representativeName: 'Ada Vendor',
         representativeRole: 'CEO',
@@ -346,8 +352,8 @@ describe('VendorsService', () => {
       service.submitProfile('vendor-id', {
         sellerType: 'RETAILER',
         termsAccepted: true,
-      representativeName: "Ada Vendor",
-      representativeRole: "CEO",
+        representativeName: 'Ada Vendor',
+        representativeRole: 'CEO',
       }),
     ).resolves.toEqual({ setupCompleted: true });
   });
@@ -371,8 +377,8 @@ describe('VendorsService', () => {
       service.submitProfile('business-id', {
         sellerType: 'BOTH',
         termsAccepted: true,
-      representativeName: "Ada Vendor",
-      representativeRole: "CEO",
+        representativeName: 'Ada Vendor',
+        representativeRole: 'CEO',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -396,7 +402,11 @@ describe('VendorsService', () => {
       ],
       profile: {
         avatarUrl: '/uploads/users/avatar.png',
-        bankAccountName: undefined, bankAccountNumber: undefined, bankCode: undefined, bankName: undefined, cacUrl: undefined,
+        bankAccountName: undefined,
+        bankAccountNumber: undefined,
+        bankCode: undefined,
+        bankName: undefined,
+        cacUrl: undefined,
         isBusiness: false,
         id: 'profile-id',
         storeName: 'Example Store',
@@ -480,7 +490,6 @@ describe('VendorsService', () => {
         vendorProfileId: 'profile-id',
       },
     });
-
   });
 
   it('creates a time-limited offer for a vendor-owned product', async () => {

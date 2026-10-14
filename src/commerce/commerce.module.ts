@@ -1,3 +1,4 @@
+import { GoodsInvoicesModule } from '../invoices/goods-invoices.module';
 import { Module } from '@nestjs/common';
 
 import { CommerceController } from './commerce.controller';
@@ -8,8 +9,13 @@ import { DeliveryProvider, MockDeliveryProvider } from './delivery.provider';
 import { GuestCheckoutController } from './guest-checkout.controller';
 
 @Module({
+  imports: [GoodsInvoicesModule],
   exports: [SellerOrdersService],
-  controllers: [CommerceController, SellerOrdersController, GuestCheckoutController],
+  controllers: [
+    CommerceController,
+    SellerOrdersController,
+    GuestCheckoutController,
+  ],
   providers: [
     CommerceService,
     SellerOrdersService,

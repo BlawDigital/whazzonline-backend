@@ -80,16 +80,28 @@ export function orderNotices(
       id: event.id,
       orderId: order.id,
       type: 'order',
-      title:
-        normalizeOrderStatus(event.status) === 'pending'
-          ? buyer
-            ? 'Order placed'
-            : 'New order'
-          : `Order ${statuses[normalizeOrderStatus(event.status)] || 'update'}`,
+      title: event.reason?.startsWith('Buyer reported')
+        ? 'Transfer awaiting confirmation'
+        : event.reason?.startsWith('Payment confirmed')
+          ? 'Receipt available'
+          : event.reason?.startsWith('Transfer not confirmed')
+            ? 'Transfer not confirmed'
+            : event.reason?.startsWith('Invoice ')
+              ? 'Merchant invoice'
+              : normalizeOrderStatus(event.status) === 'pending'
+                ? buyer
+                  ? 'Order placed'
+                  : 'New order'
+                : `Order ${statuses[normalizeOrderStatus(event.status)] || 'update'}`,
       body:
-        normalizeOrderStatus(event.status) === 'pending' && !buyer
-          ? `Order #${displayId} is waiting for your review.`
-          : `Order #${displayId} is ${statuses[normalizeOrderStatus(event.status)] || event.status.replace(/_/g, ' ')}.${event.reason ? ` Reason: ${event.reason}` : ''}`,
+        event.reason &&
+        /^(Buyer reported|Payment confirmed|Transfer not confirmed|Invoice )/.test(
+          event.reason,
+        )
+          ? event.reason
+          : normalizeOrderStatus(event.status) === 'pending' && !buyer
+            ? `Order #${displayId} is waiting for your review.`
+            : `Order #${displayId} is ${statuses[normalizeOrderStatus(event.status)] || event.status.replace(/_/g, ' ')}.${event.reason ? ` Reason: ${event.reason}` : ''}`,
       createdAt: event.createdAt.toISOString(),
       read: event.actorUserId === userId,
     })),

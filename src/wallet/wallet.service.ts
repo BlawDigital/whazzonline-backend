@@ -14,9 +14,8 @@ export class WalletService {
         accountName:
           [user.firstName, user.lastName].filter(Boolean).join(' ') ||
           'Whazzonline User',
-        accountNumber: `019${userId.replace(/-/g, '').slice(0, 7)}`,
         availableBalance: 0,
-        bankName: 'Paystack - Titan',
+
         mainBalance: 0,
         referralBonus: 0,
         userId,
@@ -45,3 +44,4 @@ export class WalletService {
     });
   }
 }
+
