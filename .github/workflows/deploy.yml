@@ -1,0 +1,116 @@
+
+name: WhazzOnline Backend CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.21.0"
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          DATABASE_URL: "postgresql://build:build@127.0.0.1:5432/build_db"
+        run: npm ci
+
+      - name: Build NestJS application
+        env:
+          DATABASE_URL: "postgresql://build:build@127.0.0.1:5432/build_db"
+        run: npm run build
+
+      - name: Verify generated Prisma client
+        run: test -d generated/prisma
+
+      - name: Verify startup file
+        run: test -f dist/src/main.js
+
+      - name: Package deployment files
+        run: |
+          tar -czf deploy.tar.gz \
+            dist \
+            generated \
+            prisma \
+            prisma.config.ts
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whazzonline-backend
+          path: deploy.tar.gz
+          retention-days: 1
+
+  deploy:
+    name: Deploy to Namecheap
+    needs: build
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Download deployment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: whazzonline-backend
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh-keyscan -p "$CPANEL_PORT" "$CPANEL_HOST" \
+            >> ~/.ssh/known_hosts
+
+      - name: Upload deployment archive
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+          CPANEL_APP_ROOT: ${{ secrets.CPANEL_APP_ROOT }}
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            -P "$CPANEL_PORT" \
+            deploy.tar.gz \
+            "$CPANEL_USER@$CPANEL_HOST:$CPANEL_APP_ROOT/tmp/deploy.tar.gz"
+
+      - name: Extract and restart application
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+          CPANEL_APP_ROOT: ${{ secrets.CPANEL_APP_ROOT }}
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -p "$CPANEL_PORT" \
+            "$CPANEL_USER@$CPANEL_HOST" \
+            "cd '$CPANEL_APP_ROOT' &&
+             tar -xzf tmp/deploy.tar.gz --no-same-owner &&
+             rm -f tmp/deploy.tar.gz &&
+             touch tmp/restart.txt"
