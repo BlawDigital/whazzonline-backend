@@ -27,13 +27,32 @@ jobs:
           node-version: "24.21.0"
           cache: npm
 
-      - name: Inspect lockfile and npm versions
+      - name: Inspect original lockfile
         run: |
           node --version
           npm --version
           npm ls @unrs/resolver-binding-linux-x64-gnu @emnapi/core --package-lock-only || true
           grep -n '"node_modules/@unrs/resolver-binding-linux-x64-gnu"' package-lock.json || true
           grep -n '"node_modules/@emnapi/core"' package-lock.json || true
+
+      - name: Regenerate lockfile on Node 24
+        run: |
+          rm -f package-lock.json
+          npm install --package-lock-only --ignore-scripts --include=optional
+
+      - name: Inspect regenerated lockfile
+        run: |
+          node --version
+          npm --version
+          grep -n '"node_modules/@unrs/resolver-binding-linux-x64-gnu"' package-lock.json || true
+          grep -n '"node_modules/@emnapi/core"' package-lock.json || true
+
+      - name: Upload regenerated lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: whazzonline-package-lock
+          path: package-lock.json
+          retention-days: 7
 
       - name: Install dependencies
         env:
