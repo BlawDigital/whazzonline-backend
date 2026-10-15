@@ -1,3 +1,4 @@
+import type { ProductReview } from 'generated/prisma/client';
 import {
   BadRequestException,
   ForbiddenException,
@@ -10,6 +11,7 @@ import {
   ContentDto,
   FeedDto,
   ProductReviewDto,
+  ProductReviewsQuery,
   UpdateContentDto,
 } from './merchant.dto';
 import { uploadMerchantMedia } from './merchant-media';
@@ -449,30 +451,160 @@ export class MerchantService {
     if (!product) throw new NotFoundException('Product not found.');
     return product;
   }
-  async reviews(id: string) {
+  async reviews(
+    id: string,
+    query: ProductReviewsQuery = new ProductReviewsQuery(),
+  ) {
     await this.product(id);
-    const [items, stats] = await Promise.all([
+    const search = query.search.trim();
+    const where = {
+      productId: id,
+      ...(search
+        ? {
+            OR: [
+              { comment: { contains: search, mode: 'insensitive' as const } },
+              {
+                user: {
+                  firstName: { contains: search, mode: 'insensitive' as const },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+    const [items, stats, distribution, total] = await this.prisma.$transaction([
       this.prisma.productReview.findMany({
-        where: { productId: id },
+        where,
         select: {
           id: true,
           rating: true,
           comment: true,
           createdAt: true,
-          user: { select: { firstName: true, avatarUrl: true } },
+          mediaUrl: true,
+          mediaType: true,
+          user: {
+            select: { firstName: true, lastName: true, avatarUrl: true },
+          },
         },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
+        orderBy:
+          query.sort === 'recent'
+            ? [{ createdAt: 'desc' }, { id: 'desc' }]
+            : [
+                { rating: query.sort === 'highest' ? 'desc' : 'asc' },
+                { createdAt: 'desc' },
+                { id: 'desc' },
+              ],
+        skip: query.offset,
+        take: query.limit,
       }),
       this.prisma.productReview.aggregate({
         where: { productId: id },
         _avg: { rating: true },
         _count: true,
       }),
+      this.prisma.productReview.groupBy({
+        by: ['rating'],
+        orderBy: { rating: 'asc' },
+        where: { productId: id },
+        _count: true,
+      }),
+      this.prisma.productReview.count({ where }),
     ]);
-    return { items, average: stats._avg.rating ?? 0, total: stats._count };
+    const voteCounts = await this.prisma.productReviewVote.groupBy({
+      by: ['reviewId', 'helpful'],
+      where: { reviewId: { in: items.map((i) => i.id) } },
+      _count: true,
+    });
+    return {
+      items: items.map(({ user, ...item }) => ({
+        ...item,
+        user: {
+          firstName: user.firstName,
+          avatarUrl: user.avatarUrl,
+          lastName: user.lastName?.slice(0, 1),
+        },
+        helpfulCount:
+          voteCounts.find((v) => v.reviewId === item.id && v.helpful)?._count ??
+          0,
+        notHelpfulCount:
+          voteCounts.find((v) => v.reviewId === item.id && !v.helpful)
+            ?._count ?? 0,
+      })),
+      average: stats._avg.rating ?? 0,
+      total: stats._count,
+      filteredTotal: total,
+      distribution: Object.fromEntries(
+        distribution.map((row) => [row.rating, row._count]),
+      ),
+      hasMore: query.offset + items.length < total,
+    };
   }
-  async review(userId: string, id: string, dto: ProductReviewDto) {
+  async reviewViewer(userId: string, id: string) {
+    const product = await this.product(id);
+    const [purchase, votes, ownReview] = await Promise.all([
+      this.prisma.commerceOrderItem.findFirst({
+        where: { productId: id, order: { userId, status: 'delivered' } },
+        select: { id: true },
+      }),
+      this.prisma.productReviewVote.findMany({
+        where: { userId, review: { productId: id } },
+        select: { reviewId: true, helpful: true },
+      }),
+      this.prisma.productReview.findUnique({
+        where: { productId_userId: { productId: id, userId } },
+        select: { id: true },
+      }),
+    ]);
+    return {
+      isOwner: product.vendorProfile.userId === userId,
+      canReview: product.vendorProfile.userId !== userId && !!purchase,
+      ownReviewId: ownReview?.id ?? null,
+      votes: Object.fromEntries(votes.map((v) => [v.reviewId, v.helpful])),
+    };
+  }
+  async voteProductReview(
+    userId: string,
+    productId: string,
+    reviewId: string,
+    helpful: boolean | null,
+  ) {
+    await this.product(productId);
+    const review = await this.prisma.productReview.findFirst({
+      where: { id: reviewId, productId },
+      select: { userId: true },
+    });
+    if (!review)
+      throw new NotFoundException('Review not found for this product.');
+    if (review.userId === userId)
+      throw new ForbiddenException('You cannot vote on your own review.');
+    const where = { userId_reviewId: { userId, reviewId } };
+    if (helpful === null)
+      await this.prisma.productReviewVote.deleteMany({
+        where: { userId, reviewId },
+      });
+    else
+      await this.prisma.productReviewVote.upsert({
+        where,
+        create: { userId, reviewId, helpful },
+        update: { helpful },
+      });
+    const counts = await this.prisma.productReviewVote.groupBy({
+      by: ['helpful'],
+      where: { reviewId },
+      _count: true,
+    });
+    return {
+      viewerVote: helpful,
+      helpfulCount: counts.find((c) => c.helpful)?._count ?? 0,
+      notHelpfulCount: counts.find((c) => !c.helpful)?._count ?? 0,
+    };
+  }
+  async review(
+    userId: string,
+    id: string,
+    dto: ProductReviewDto,
+    file?: Express.Multer.File,
+  ) {
     const product = await this.product(id);
     if (product.vendorProfile.userId === userId)
       throw new ForbiddenException('You cannot review your own product.');
@@ -486,15 +618,75 @@ export class MerchantService {
       throw new ForbiddenException(
         'Reviews are available after a delivered purchase.',
       );
-    return this.prisma.productReview.upsert({
-      where: { productId_userId: { productId: id, userId } },
-      create: {
-        productId: id,
-        userId,
-        rating: dto.rating,
-        comment: dto.comment.trim(),
-      },
-      update: { rating: dto.rating, comment: dto.comment.trim() },
-    });
+    const previousMedia = file
+      ? await this.prisma.productReview.findUnique({
+          where: { productId_userId: { productId: id, userId } },
+          select: { mediaPublicId: true, mediaType: true },
+        })
+      : null;
+    const media = file ? await uploadMerchantMedia(file) : undefined;
+    let saved: Pick<
+      ProductReview,
+      'id' | 'rating' | 'comment' | 'createdAt' | 'mediaUrl' | 'mediaType'
+    >;
+    try {
+      saved = await this.prisma.productReview.upsert({
+        select: {
+          id: true,
+          rating: true,
+          comment: true,
+          createdAt: true,
+          mediaUrl: true,
+          mediaType: true,
+        },
+        where: { productId_userId: { productId: id, userId } },
+        create: {
+          productId: id,
+          userId,
+          rating: dto.rating,
+          comment: dto.comment.trim(),
+          ...(media
+            ? {
+                mediaUrl: media.mediaUrl,
+                mediaType: media.mediaType,
+                mediaPublicId: media.publicId,
+              }
+            : {}),
+        },
+        update: {
+          rating: dto.rating,
+          comment: dto.comment.trim(),
+          ...(media
+            ? {
+                mediaUrl: media.mediaUrl,
+                mediaType: media.mediaType,
+                mediaPublicId: media.publicId,
+              }
+            : {}),
+        },
+      });
+    } catch (error) {
+      if (media) {
+        try {
+          await cloudinaryClient().uploader.destroy(media.publicId, {
+            resource_type: media.resourceType,
+          });
+        } catch {
+          /* Keep the original database error. */
+        }
+      }
+      throw error;
+    }
+    if (media && previousMedia?.mediaPublicId) {
+      try {
+        await cloudinaryClient().uploader.destroy(previousMedia.mediaPublicId, {
+          resource_type:
+            previousMedia.mediaType === 'VIDEO' ? 'video' : 'image',
+        });
+      } catch {
+        /* Replaced media cleanup can be retried without failing a saved review. */
+      }
+    }
+    return saved;
   }
 }

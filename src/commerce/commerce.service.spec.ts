@@ -41,6 +41,17 @@ describe('CommerceService trust reviews', () => {
     );
   });
 
+  it('does not let a buyer complete an order before direct merchant payment is confirmed', async () => {
+    prisma.commerceOrder.findFirst.mockResolvedValue({
+      id: 'unpaid-order',
+      userId: 'buyer',
+      status: 'confirmed',
+      paymentStatus: 'pending',
+    });
+    await expect(
+      service.completeOrder('buyer', 'unpaid-order'),
+    ).rejects.toThrow('Payment must be confirmed');
+  });
   it('does not expose database-only fields in order item responses', async () => {
     prisma.commerceCartItem.findMany.mockResolvedValue([]);
     prisma.commerceOrder.findMany.mockResolvedValue([

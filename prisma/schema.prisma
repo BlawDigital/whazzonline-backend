@@ -93,6 +93,7 @@ model User {
   productLikes         ProductLike[]
   merchantContacts     MerchantContact[]
   productReviews       ProductReview[]
+  productReviewVotes   ProductReviewVote[]
   buyerConversations   Conversation[]              @relation("ConversationBuyer")
   sentMessages         ChatMessage[]               @relation("MessageSender")
   supportTickets       SupportTicket[]             @relation("SupportTicketOwner")
@@ -816,15 +817,19 @@ model MerchantContent {
 }
 
 model ProductReview {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  productId String
-  userId    String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rating    Int
-  comment   String
+  id            String              @id @default(uuid())
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  productId     String
+  userId        String
+  product       Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating        Int
+  comment       String
+  mediaUrl      String?
+  mediaType     String?
+  mediaPublicId String?
+  votes         ProductReviewVote[]
 
   @@unique([productId, userId])
   @@index([productId, createdAt])
@@ -909,4 +914,16 @@ model ProductComment {
 
   @@index([productId, createdAt])
   @@index([userId, createdAt])
+}
+
+model ProductReviewVote {
+  id       String        @id @default(uuid())
+  userId   String
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewId String
+  review   ProductReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  helpful  Boolean
+
+  @@unique([userId, reviewId])
+  @@index([reviewId])
 }

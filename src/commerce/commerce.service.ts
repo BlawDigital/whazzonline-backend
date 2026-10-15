@@ -407,6 +407,10 @@ export class CommerceService {
       where: { id, userId },
     });
     if (!order) throw new NotFoundException('Order not found.');
+    if (order.paymentStatus !== 'paid')
+      throw new BadRequestException(
+        'Payment must be confirmed before completing the order.',
+      );
     if (order.status === 'delivered' && order.completedAt) {
       return { completedAt: order.completedAt.toISOString(), id };
     }
