@@ -406,6 +406,11 @@ model Offer {
   type                OfferType
   status              OfferStatus        @default(ACTIVE)
   name                String?
+  description         String?
+  mediaUrls           String[]           @default([])
+  stockLimit          Int?
+  unitsClaimed        Int                @default(0)
+  createRequestId     String?            @unique
   discountType        OfferDiscountType?
   discountValue       Int?
   bundlePrice         Int?
@@ -581,6 +586,8 @@ model CommerceOrderItem {
   order   CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   sourceCartItemId String?
+
+  appliedOfferId String?
 
   productId        String
   vendorId         String

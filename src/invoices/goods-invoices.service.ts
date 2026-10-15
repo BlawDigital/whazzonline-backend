@@ -1,4 +1,9 @@
 import {
+  applyOfferPricing,
+  deliveryOfferFee,
+  releaseOfferUnits,
+} from '../vendors/offer-pricing';
+import {
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -294,8 +299,78 @@ export class GoodsInvoicesService {
     }
     try {
       return await this.transaction(async (tx) => {
+        const now = new Date();
+        const products = await tx.product.findMany({
+          where: { id: { in: input.lines.map((l) => l.productId) } },
+        });
+        const offers = await tx.offer.findMany({
+          where: {
+            status: { in: ['ACTIVE', 'SCHEDULED'] },
+            startsAt: { lte: now },
+            endsAt: { gt: now },
+            vendorProfile: { userId: { in: vendorIds } },
+            products: {
+              some: { productId: { in: input.lines.map((l) => l.productId) } },
+            },
+          },
+          include: { products: true },
+        });
+        const { lines: pricedLines, claimed } = applyOfferPricing(
+          input.lines,
+          products,
+          offers,
+          now,
+        );
+        for (const [id, units] of [...claimed].sort(([a], [b]) =>
+          a.localeCompare(b),
+        )) {
+          const offer = offers.find((o) => o.id === id)!;
+          const updated = await tx.offer.updateMany({
+            where: { id, unitsClaimed: { lte: offer.stockLimit! - units } },
+            data: { unitsClaimed: { increment: units } },
+          });
+          if (updated.count !== 1)
+            throw new BadRequestException(
+              'Offer stock changed. Refresh your cart and try again.',
+            );
+        }
+        const merchantFees = new Map(
+          vendorIds.map((vendorId, index) => {
+            const fee =
+              Math.floor(input.deliveryFee / vendorIds.length) +
+              (index < input.deliveryFee % vendorIds.length ? 1 : 0);
+            const vendorLines = pricedLines.filter(
+              (l) => l.vendorId === vendorId,
+            );
+            const subtotal = vendorLines.reduce(
+              (sum, l) => sum + l.unitPrice * l.quantity,
+              0,
+            );
+            const vendorOffers = offers.filter((o) =>
+              vendorLines.some((l) =>
+                o.products.some((p) => p.productId === l.productId),
+              ),
+            );
+            return [
+              vendorId,
+              deliveryOfferFee(
+                fee,
+                subtotal,
+                vendorLines.map((l) => l.productId),
+                vendorOffers,
+                input.address.label,
+                now,
+              ),
+            ] as const;
+          }),
+        );
+        const deliveryTotal = [...merchantFees.values()].reduce(
+          (a, b) => a + b,
+          0,
+        );
+
         const quantities = new Map<string, number>();
-        for (const line of input.lines)
+        for (const line of pricedLines)
           quantities.set(
             line.productId,
             (quantities.get(line.productId) ?? 0) + line.quantity,
@@ -317,11 +392,11 @@ export class GoodsInvoicesService {
               'An item no longer has enough stock. Refresh your cart.',
             );
         }
-        const subtotal = input.lines.reduce(
+        const subtotal = pricedLines.reduce(
             (sum, i) => sum + i.quantity * i.unitPrice,
             0,
           ),
-          total = subtotal + input.deliveryFee;
+          total = subtotal + deliveryTotal;
         const order = await tx.commerceOrder.create({
           data: {
             userId: input.userId,
@@ -339,19 +414,17 @@ export class GoodsInvoicesService {
             paymentStatus: 'pending',
             status: 'confirmed',
             serviceFee: 0,
-            deliveryFee: input.deliveryFee,
+            deliveryFee: deliveryTotal,
             subtotal,
             total,
-            items: { create: input.lines },
+            items: { create: pricedLines },
           },
         });
         for (let index = 0; index < vendorIds.length; index++) {
           const vendorId = vendorIds[index],
             profile = profiles.find((p) => p.userId === vendorId)!,
-            deliveryFee =
-              Math.floor(input.deliveryFee / vendorIds.length) +
-              (index < input.deliveryFee % vendorIds.length ? 1 : 0),
-            merchantSubtotal = input.lines
+            deliveryFee = merchantFees.get(vendorId)!,
+            merchantSubtotal = pricedLines
               .filter((i) => i.vendorId === vendorId)
               .reduce((sum, i) => sum + i.quantity * i.unitPrice, 0);
           const invoice = await tx.goodsInvoice.create({
@@ -426,7 +499,7 @@ export class GoodsInvoicesService {
           }
         }
         if (input.userId) {
-          const ids = input.lines
+          const ids = pricedLines
             .map((i) => i.sourceCartItemId)
             .filter((id): id is string => !!id);
           if (ids.length)
@@ -734,6 +807,7 @@ export class GoodsInvoicesService {
       const items = await tx.commerceOrderItem.findMany({
         where: { orderId: invoice.orderId, vendorId: invoice.vendorId },
       });
+      await releaseOfferUnits(tx, items);
       for (const item of items)
         await tx.product.updateMany({
           where: { id: item.productId },

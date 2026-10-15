@@ -52,6 +52,9 @@ export class MerchantController {
   @Get('offers') offers(@Req() req: AuthenticatedRequest) {
     return this.service.offers(req.user.sub);
   }
+  @Get('offers/explore') exploreOffers(@Req() req: AuthenticatedRequest) {
+    return this.service.offers(req.user.sub, true);
+  }
   @Get('notifications') notifications(@Req() req: AuthenticatedRequest) {
     return this.service.notifications(req.user.sub);
   }

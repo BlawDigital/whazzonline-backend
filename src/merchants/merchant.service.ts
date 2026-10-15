@@ -1,5 +1,9 @@
 import type { ProductReview } from 'generated/prisma/client';
 import {
+  legacyProductOffer,
+  legacyPromotionWhere,
+} from '../vendors/legacy-product-offer';
+import {
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -274,9 +278,9 @@ export class MerchantService {
       .catch(() => undefined);
     return { deleted: true };
   }
-  async offers(userId: string) {
+  async offers(userId: string, explore = false) {
     const now = new Date();
-    return this.prisma.offer.findMany({
+    const offers = await this.prisma.offer.findMany({
       where: {
         status: { in: ['ACTIVE', 'SCHEDULED'] },
         startsAt: { lte: now },
@@ -284,21 +288,93 @@ export class MerchantService {
         vendorProfile: {
           setupCompleted: true,
           user: { isActive: true },
-          contacts: { some: { userId } },
+          ...(explore
+            ? { userId: { not: userId } }
+            : { contacts: { some: { userId } } }),
         },
       },
       include: {
         products: {
           where: { product: { status: 'ACTIVE' } },
           include: {
-            product: { select: { id: true, name: true, status: true } },
+            product: {
+              select: {
+                id: true,
+                name: true,
+                status: true,
+                imageUrls: true,
+                unitPrice: true,
+                quantity: true,
+                category: true,
+              },
+            },
           },
         },
-        vendorProfile: { select: { userId: true, storeName: true } },
+        vendorProfile: {
+          select: {
+            userId: true,
+            storeName: true,
+            logoUrl: true,
+            bannerUrl: true,
+            description: true,
+            city: true,
+            state: true,
+            category: true,
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
+    const legacy = await this.prisma.product.findMany({
+      where: {
+        ...legacyPromotionWhere(now),
+        vendorProfile: {
+          setupCompleted: true,
+          user: { isActive: true },
+          ...(explore
+            ? { userId: { not: userId } }
+            : { contacts: { some: { userId } } }),
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        unitPrice: true,
+        quantity: true,
+        imageUrls: true,
+        category: true,
+        promoPrice: true,
+        promoStartsAt: true,
+        promoEndsAt: true,
+        vendorProfile: {
+          select: {
+            userId: true,
+            storeName: true,
+            logoUrl: true,
+            bannerUrl: true,
+            description: true,
+            city: true,
+            state: true,
+            category: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return [
+      ...offers.filter(
+        (offer) =>
+          offer.stockLimit === null || offer.unitsClaimed < offer.stockLimit,
+      ),
+      ...legacy.map(({ vendorProfile, ...product }) => ({
+        ...legacyProductOffer(product),
+        vendorProfile,
+        products: [{ product }],
+      })),
+    ];
   }
   async notifications(userId: string) {
     const [orders, posts, reads, supportReplies] = await Promise.all([

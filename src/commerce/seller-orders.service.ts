@@ -1,3 +1,4 @@
+import { releaseOfferUnits } from '../vendors/offer-pricing';
 import {
   BadRequestException,
   ConflictException,
@@ -321,6 +322,7 @@ export class SellerOrdersService {
           data: { status: 'VOID' },
         });
         await reconcileInvoicePayments(tx, id);
+        await releaseOfferUnits(tx, order.items);
         for (const item of order.items)
           await tx.product.updateMany({
             where: { id: item.productId },

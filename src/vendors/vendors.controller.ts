@@ -212,6 +212,40 @@ export class VendorsController {
     return this.vendorsService.createOffer(userId, dto);
   }
 
+  @Put(':userId/offers/:offerId')
+  @UseGuards(JwtAuthGuard)
+  updateDraftOffer(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Param('offerId') offerId: string,
+    @Body() dto: CreateOfferDto,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own offers.');
+    return this.vendorsService.createOffer(userId, dto, offerId);
+  }
+
+  @Post(':userId/offers/media')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FilesInterceptor('images', 5, productUploadOptions))
+  async uploadOfferMedia(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @UploadedFiles() files: Express.Multer.File[] = [],
+  ) {
+    try {
+      if (request.user.sub !== userId)
+        throw new ForbiddenException('You can only manage your own offers.');
+      await this.vendorsService.findOffers(userId);
+      if (!files.length)
+        throw new BadRequestException('Choose an offer photo.');
+      return { urls: files.map(publicProductUploadUrl) };
+    } catch (error) {
+      await removeProductUploads(files);
+      throw error;
+    }
+  }
+
   @Patch(':userId/products/:productId')
   @UseGuards(JwtAuthGuard)
   updateProduct(
