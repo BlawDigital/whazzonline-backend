@@ -72,9 +72,12 @@ model User {
 
   role UserRole @default(CUSTOMER)
 
-  isVerified    Boolean @default(false)
-  isActive      Boolean @default(true)
-  emailVerified Boolean @default(false)
+  isVerified           Boolean               @default(false)
+  isActive             Boolean               @default(true)
+  emailVerified        Boolean               @default(false)
+  referralCode         String?               @unique
+  referredBy           Referral?             @relation("Referee")
+  merchantSubscription MerchantSubscription?
 
   notificationReads    SellerNotificationRead[]
   notificationSettings SellerNotificationSettings?
@@ -90,6 +93,7 @@ model User {
   productLikes         ProductLike[]
   merchantContacts     MerchantContact[]
   productReviews       ProductReview[]
+  productReviewVotes   ProductReviewVote[]
   buyerConversations   Conversation[]              @relation("ConversationBuyer")
   sentMessages         ChatMessage[]               @relation("MessageSender")
   supportTickets       SupportTicket[]             @relation("SupportTicketOwner")
@@ -142,14 +146,15 @@ model Wallet {
 }
 
 model WalletTransaction {
-  id          String                  @id @default(uuid())
-  createdAt   DateTime                @default(now())
-  walletId    String
-  wallet      Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  amount      Int
-  description String
-  type        WalletTransactionType
-  status      WalletTransactionStatus @default(COMPLETED)
+  id             String                  @id @default(uuid())
+  createdAt      DateTime                @default(now())
+  walletId       String
+  wallet         Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  amount         Int
+  description    String
+  type           WalletTransactionType
+  status         WalletTransactionStatus @default(COMPLETED)
+  referralReward ReferralReward?
 
   @@index([walletId, createdAt])
   @@index([status])
@@ -161,17 +166,58 @@ enum ReferralStatus {
 }
 
 model Referral {
-  id             String         @id @default(uuid())
-  createdAt      DateTime       @default(now())
+  id             String           @id @default(uuid())
+  createdAt      DateTime         @default(now())
   referrerUserId String
-  referrer       User           @relation("Referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
+  referrer       User             @relation("Referrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
   refereeName    String
-  rewardAmount   Int            @default(500)
-  status         ReferralStatus @default(PENDING)
+  rewardAmount   Int              @default(500)
+  status         ReferralStatus   @default(PENDING)
   completedAt    DateTime?
+  refereeUserId  String?          @unique
+  referee        User?            @relation("Referee", fields: [refereeUserId], references: [id], onDelete: SetNull)
+  rewards        ReferralReward[]
 
   @@index([referrerUserId, createdAt])
   @@index([status])
+}
+
+model MerchantSubscription {
+  id             String                @id @default(uuid())
+  userId         String                @unique
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  trialStartedAt DateTime
+  trialEndsAt    DateTime
+  payments       SubscriptionPayment[]
+}
+
+model SubscriptionPayment {
+  id             String               @id @default(uuid())
+  checkoutUrl    String?
+  subscriptionId String
+  subscription   MerchantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  reference      String               @unique
+  period         Int
+  amount         Int
+  paidAt         DateTime?
+  createdAt      DateTime             @default(now())
+  reward         ReferralReward?
+
+  @@unique([subscriptionId, period])
+}
+
+model ReferralReward {
+  id            String              @id @default(uuid())
+  createdAt     DateTime            @default(now())
+  referralId    String
+  referral      Referral            @relation(fields: [referralId], references: [id], onDelete: Restrict)
+  paymentId     String              @unique
+  payment       SubscriptionPayment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  transactionId String              @unique
+  transaction   WalletTransaction   @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  amount        Int
+
+  @@index([referralId, createdAt])
 }
 
 model PhoneOtp {
@@ -249,13 +295,15 @@ model VendorProfile {
 
   featuredProductId String?
 
-  products      Product[]
-  categories    VendorCategory[]
-  trustReviews  VendorTrustReview[]
-  offers        Offer[]
-  conversations Conversation[]
-  contacts      MerchantContact[]
-  content       MerchantContent[]
+  products           Product[]
+  categories         VendorCategory[]
+  trustReviews       VendorTrustReview[]
+  offers             Offer[]
+  conversations      Conversation[]
+  paymentConnections MerchantPaymentConnection[]
+  invoices           GoodsInvoice[]
+  contacts           MerchantContact[]
+  content            MerchantContent[]
 
   @@index([category])
   @@index([state, city])
@@ -358,6 +406,11 @@ model Offer {
   type                OfferType
   status              OfferStatus        @default(ACTIVE)
   name                String?
+  description         String?
+  mediaUrls           String[]           @default([])
+  stockLimit          Int?
+  unitsClaimed        Int                @default(0)
+  createRequestId     String?            @unique
   discountType        OfferDiscountType?
   discountValue       Int?
   bundlePrice         Int?
@@ -432,6 +485,8 @@ model ChatMessage {
   kind            ChatMessageKind
   text            String?
   imageUri        String?
+  invoiceId       String?
+  invoice         GoodsInvoice?   @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
   productContext  Json?
 
   @@unique([conversationId, clientMessageId])
@@ -509,12 +564,15 @@ model CommerceOrder {
   deliveryFee     Int
   total           Int
 
-  items          CommerceOrderItem[]
-  issues         OrderIssue[]
-  returnRequests ReturnRequest[]
-  trustReviews   VendorTrustReview[]
-  fulfillments   SellerFulfillment[]
-  supportTickets SupportTicket[]
+  items                 CommerceOrderItem[]
+  issues                OrderIssue[]
+  returnRequests        ReturnRequest[]
+  trustReviews          VendorTrustReview[]
+  fulfillments          SellerFulfillment[]
+  invoices              GoodsInvoice[]
+  checkoutKey           String?             @unique
+  guestInvoiceTokenHash String?
+  supportTickets        SupportTicket[]
 
   @@index([userId, createdAt])
   @@index([status])
@@ -528,6 +586,8 @@ model CommerceOrderItem {
   order   CommerceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   sourceCartItemId String?
+
+  appliedOfferId String?
 
   productId        String
   vendorId         String
@@ -764,18 +824,85 @@ model MerchantContent {
 }
 
 model ProductReview {
-  id        String   @id @default(uuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  productId String
-  userId    String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rating    Int
-  comment   String
+  id            String              @id @default(uuid())
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  productId     String
+  userId        String
+  product       Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating        Int
+  comment       String
+  mediaUrl      String?
+  mediaType     String?
+  mediaPublicId String?
+  votes         ProductReviewVote[]
 
   @@unique([productId, userId])
   @@index([productId, createdAt])
+}
+
+model MerchantPaymentConnection {
+  id              String         @id @default(uuid())
+  vendorProfileId String
+  vendorProfile   VendorProfile  @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  encryptedKey    String
+  enabled         Boolean        @default(true)
+  mode            String
+  createdAt       DateTime       @default(now())
+  invoices        GoodsInvoice[]
+
+  @@index([vendorProfileId, enabled])
+}
+
+model GoodsInvoice {
+  id                    String                     @id @default(uuid())
+  number                String                     @unique
+  orderId               String
+  order                 CommerceOrder              @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  vendorId              String
+  vendorProfileId       String
+  vendorProfile         VendorProfile              @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  bank                  Json
+  subtotal              Int
+  deliveryFee           Int
+  total                 Int
+  status                String                     @default("OPEN")
+  paymentMethod         String                     @default("bank")
+  createdAt             DateTime                   @default(now())
+  expiresAt             DateTime
+  paidAt                DateTime?
+  paymentIssue          String?
+  receiptNumber         String?                    @unique
+  confirmationReference String?
+  confirmedBy           String?
+  checkoutReference     String?                    @unique
+  checkoutEmail         String?
+  checkoutUrl           String?
+  connectionId          String?
+  connection            MerchantPaymentConnection? @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  messages              ChatMessage[]
+  reports               InvoiceTransferReport[]
+
+  @@unique([orderId, vendorId])
+  @@index([vendorId, status, createdAt])
+  @@index([status, expiresAt])
+}
+
+model InvoiceTransferReport {
+  id         String       @id @default(uuid())
+  invoiceId  String
+  invoice    GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  requestId  String
+  reference  String
+  note       String?
+  status     String       @default("PENDING")
+  createdAt  DateTime     @default(now())
+  reviewedAt DateTime?
+  reviewNote String?
+
+  @@unique([invoiceId, requestId])
+  @@index([invoiceId, status])
 }
 
 //comments
@@ -794,4 +921,16 @@ model ProductComment {
 
   @@index([productId, createdAt])
   @@index([userId, createdAt])
+}
+
+model ProductReviewVote {
+  id       String        @id @default(uuid())
+  userId   String
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewId String
+  review   ProductReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  helpful  Boolean
+
+  @@unique([userId, reviewId])
+  @@index([reviewId])
 }

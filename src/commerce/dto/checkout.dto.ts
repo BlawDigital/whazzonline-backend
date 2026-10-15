@@ -1,3 +1,4 @@
+import { IsUUID, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -24,12 +25,14 @@ class CheckoutCartItemDto {
 }
 
 export class CheckoutDto {
+  @IsOptional() @IsUUID() idempotencyKey?: string;
   @ValidateNested()
   @Type(() => DeliveryAddressDto)
   address!: DeliveryAddressDto;
 
   @IsOptional() @IsInt() @Min(1) itemCount?: number;
-  @IsIn(['wallet', 'bank', 'card', 'bnpl', 'pay_on_delivery']) paymentMethod!: string;
+  @IsIn(['wallet', 'bank', 'card', 'bnpl', 'pay_on_delivery'])
+  paymentMethod!: string;
   @IsOptional()
   @IsNumber()
   @Min(0)
@@ -50,4 +53,3 @@ export class CheckoutDto {
   @Type(() => AddCartItemDto)
   items?: AddCartItemDto[];
 }
-

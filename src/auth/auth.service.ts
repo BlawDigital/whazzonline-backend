@@ -321,6 +321,11 @@ async register(registerDto: RegisterDto) {
   } as const;
 
   const role = roleByRegistrationType[registrationType];
+  const referrer = registerDto.referralCode
+    ? await this.prisma.user.findFirst({ where: { referralCode: registerDto.referralCode, isActive: true, isVerified: true } })
+    : null;
+  if (registerDto.referralCode && !referrer) throw new BadRequestException('This referral link is invalid or no longer active.');
+  if (registerDto.referralCode && registrationType === 'BUYER') throw new BadRequestException('This invitation is for a merchant account. Choose Seller or Business to continue.');
 
   // ============================================================
   // CREATE ACCOUNT
@@ -335,6 +340,7 @@ async register(registerDto: RegisterDto) {
       passwordHash,
       registrationType,
       role,
+      ...(referrer ? { referredBy: { create: { referrerUserId: referrer.id, refereeName: [firstName, lastName].filter(Boolean).join(' ') || 'New merchant', rewardAmount: 0 } } } : {}),
 
       authProvider: normalizedPhone
         ? 'PHONE'

@@ -1,3 +1,4 @@
+import { ReviewVoteDto } from '../vendors/dto/store-community.dto';
 import {
   Body,
   Controller,
@@ -21,6 +22,7 @@ import {
   ContentDto,
   FeedDto,
   ProductReviewDto,
+  ProductReviewsQuery,
   UpdateContentDto,
 } from './merchant.dto';
 import { MerchantService } from './merchant.service';
@@ -49,6 +51,9 @@ export class MerchantController {
   }
   @Get('offers') offers(@Req() req: AuthenticatedRequest) {
     return this.service.offers(req.user.sub);
+  }
+  @Get('offers/explore') exploreOffers(@Req() req: AuthenticatedRequest) {
+    return this.service.offers(req.user.sub, true);
   }
   @Get('notifications') notifications(@Req() req: AuthenticatedRequest) {
     return this.service.notifications(req.user.sub);
@@ -108,12 +113,38 @@ export class MerchantController {
   ) {
     return this.service.assignAisle(req.user.sub, id, dto.aisleId);
   }
-  @Post('products/:id/reviews') review(
+  @Get('products/:id/reviews/viewer') reviewViewer(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.service.reviewViewer(req.user.sub, id);
+  }
+  @Post('products/:id/reviews/:reviewId/vote') reviewVote(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('reviewId') reviewId: string,
+    @Body() dto: ReviewVoteDto,
+  ) {
+    return this.service.voteProductReview(
+      req.user.sub,
+      id,
+      reviewId,
+      dto.helpful ?? null,
+    );
+  }
+  @Post('products/:id/reviews')
+  @UseInterceptors(
+    FileInterceptor('media', {
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+    }),
+  )
+  review(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: ProductReviewDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.service.review(req.user.sub, id, dto);
+    return this.service.review(req.user.sub, id, dto, file);
   }
 }
 
@@ -140,7 +171,10 @@ export class MerchantPublicController {
   @Get(':merchantId/aisles') aisles(@Param('merchantId') id: string) {
     return this.service.aisles(id);
   }
-  @Get('products/:id/reviews') reviews(@Param('id') id: string) {
-    return this.service.reviews(id);
+  @Get('products/:id/reviews') reviews(
+    @Param('id') id: string,
+    @Query() query: ProductReviewsQuery,
+  ) {
+    return this.service.reviews(id, query);
   }
 }

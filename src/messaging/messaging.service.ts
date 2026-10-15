@@ -119,6 +119,7 @@ export class MessagingService {
       conversationId: message.conversationId,
       direction: message.senderUserId === userId ? 'outgoing' : 'incoming',
       id: message.id,
+      invoiceId: message.invoiceId ?? undefined,
       imageUri: message.imageUri ?? undefined,
       kind: message.kind.toLowerCase(),
       sentAt: message.createdAt.toISOString(),
@@ -554,3 +555,4 @@ export class MessagingService {
     return { conversationId, typing };
   }
 }
+
