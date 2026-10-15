@@ -63,3 +63,10 @@ export class AisleDto {
 export class AssignAisleDto {
   @IsOptional() @IsUUID() aisleId?: string | null;
 }
+
+export class ProductReviewsQuery {
+  @IsOptional() @IsString() @MaxLength(120) search = '';
+  @IsOptional() @IsIn(['recent', 'highest', 'lowest']) sort = 'recent';
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset = 0;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit = 20;
+}

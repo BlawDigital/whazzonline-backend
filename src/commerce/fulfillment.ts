@@ -32,3 +32,29 @@ export async function syncOrder(tx: Prisma.TransactionClient, orderId: string) {
     },
   });
 }
+
+/** Direct goods receipts reconcile independently across the merchants in one order. */
+export async function reconcileInvoicePayments(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+) {
+  const active = await tx.goodsInvoice.findMany({
+    where: { orderId, status: { not: 'VOID' } },
+    select: { status: true, total: true, subtotal: true, deliveryFee: true },
+  });
+  await tx.commerceOrder.update({
+    where: { id: orderId },
+    data: {
+      paymentStatus: !active.length
+        ? 'cancelled'
+        : active.every((i) => i.status === 'PAID')
+          ? 'paid'
+          : active.some((i) => i.status === 'PAID')
+            ? 'partial'
+            : 'pending',
+      total: active.reduce((sum, i) => sum + i.total, 0),
+      subtotal: active.reduce((sum, i) => sum + i.subtotal, 0),
+      deliveryFee: active.reduce((sum, i) => sum + i.deliveryFee, 0),
+    },
+  });
+}

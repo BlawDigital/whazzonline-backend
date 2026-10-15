@@ -1,3 +1,4 @@
+import { releaseOfferUnits } from '../vendors/offer-pricing';
 import {
   BadRequestException,
   ConflictException,
@@ -6,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { DeliveryProvider, type DeliveryLevel } from './delivery.provider';
-import { lockOrder, syncOrder } from './fulfillment';
+import { lockOrder, syncOrder, reconcileInvoicePayments } from './fulfillment';
 import { normalizeOrderStatus } from './order-status';
 import {
   orderNotificationSelect,
@@ -49,7 +50,7 @@ export class SellerOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly deliveryProvider: DeliveryProvider,
-  ) { }
+  ) {}
 
   capabilities() {
     return { delivery: deliveryCapability, support: supportCapability };
@@ -149,6 +150,10 @@ export class SellerOrdersService {
     const order = await this.prisma.commerceOrder.findFirst({
       where: { id, items: { some: { vendorId: userId } } },
       include: {
+        invoices: {
+          where: { vendorId: userId },
+          select: { id: true, status: true, total: true, paymentMethod: true },
+        },
         items: { where: { vendorId: userId } },
         user: {
           select: {
@@ -194,27 +199,25 @@ export class SellerOrdersService {
       rejectionReason: fulfillment.rejectionReason,
       displayId: order.id.slice(0, 8).toUpperCase(),
 
-
       customer: order.user
         ? {
-          id: order.user.id,
-          name:
-            [order.user.firstName, order.user.lastName]
-              .filter(Boolean)
-              .join(" ") || "Buyer",
-          phone: order.user.phone,
-          avatarUrl: order.user.avatarUrl,
-        }
+            id: order.user.id,
+            name:
+              [order.user.firstName, order.user.lastName]
+                .filter(Boolean)
+                .join(' ') || 'Buyer',
+            phone: order.user.phone,
+            avatarUrl: order.user.avatarUrl,
+          }
         : {
-          id: undefined,
-          name:
-            [order.guestFirstName, order.guestLastName]
-              .filter(Boolean)
-              .join(" ") || "Guest",
-          phone: order.guestPhone,
-          avatarUrl: null,
-        },
-
+            id: undefined,
+            name:
+              [order.guestFirstName, order.guestLastName]
+                .filter(Boolean)
+                .join(' ') || 'Guest',
+            phone: order.guestPhone,
+            avatarUrl: null,
+          },
 
       deliveryAddress: order.deliveryAddress,
       items: order.items.map((item) => ({
@@ -234,9 +237,15 @@ export class SellerOrdersService {
             .join(' · ') || undefined,
       })),
       subtotal,
-      total: subtotal,
-      paymentMethod: order.paymentMethod,
-      paymentStatus: 'unverified',
+      total: order.invoices[0]?.total ?? subtotal,
+      invoiceId: order.invoices[0]?.id,
+      paymentMethod: order.invoices[0]?.paymentMethod ?? order.paymentMethod,
+      paymentStatus:
+        order.invoices[0]?.status === 'PAID'
+          ? 'paid'
+          : order.paymentStatus === 'paid'
+            ? 'paid'
+            : 'pending',
       latitude: order.latitude,
       longitude: order.longitude,
       history: fulfillment.history.map((event) => ({
@@ -287,7 +296,40 @@ export class SellerOrdersService {
         throw new ConflictException(
           `Cannot change ${currentStatus} to ${status}.`,
         );
-      if (status === 'processing') {
+      const invoice = await tx.goodsInvoice.findFirst({
+        where: { orderId: id, vendorId: userId },
+      });
+      if (invoice?.status === 'VOID')
+        throw new BadRequestException(
+          'The invoice has expired or was cancelled. Create a new invoice.',
+        );
+      if (
+        invoice &&
+        ['ready', 'out_for_delivery', 'delivered'].includes(status) &&
+        invoice.status !== 'PAID' &&
+        invoice.paymentMethod !== 'pay_on_delivery'
+      )
+        throw new BadRequestException(
+          'Confirm the merchant invoice payment before dispatching goods.',
+        );
+      if (status === 'rejected' && invoice && invoice.status !== 'PAID') {
+        if (invoice.checkoutReference)
+          throw new BadRequestException(
+            'Verify the secure checkout before rejecting this order.',
+          );
+        await tx.goodsInvoice.update({
+          where: { id: invoice.id },
+          data: { status: 'VOID' },
+        });
+        await reconcileInvoicePayments(tx, id);
+        await releaseOfferUnits(tx, order.items);
+        for (const item of order.items)
+          await tx.product.updateMany({
+            where: { id: item.productId },
+            data: { quantity: { increment: item.quantity } },
+          });
+      }
+      if (status === 'processing' && !invoice) {
         const quantities = new Map<string, number>();
         for (const item of order.items)
           quantities.set(
@@ -454,12 +496,12 @@ export class SellerOrdersService {
           description: description.trim(),
           replies: evidenceUrls.length
             ? {
-              create: {
-                authorUserId: userId,
-                text: description.trim(),
-                evidenceUrls,
-              },
-            }
+                create: {
+                  authorUserId: userId,
+                  text: description.trim(),
+                  evidenceUrls,
+                },
+              }
             : undefined,
         },
         include: { replies: { orderBy: { createdAt: 'asc' } } },
@@ -507,7 +549,6 @@ export class SellerOrdersService {
         'Guest orders do not have an account conversation.',
       );
     }
-
 
     const clientThreadId = `order:${orderId}:${vendor.id}`;
     const conversation = await this.prisma.conversation.upsert({

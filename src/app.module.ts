@@ -1,3 +1,4 @@
+import { GoodsInvoicesModule } from './invoices/goods-invoices.module';
 import { SellerNotificationsModule } from './seller-notifications/seller-notifications.module';
 import { MerchantModule } from './merchants/merchant.module';
 import { Module } from '@nestjs/common';
@@ -28,6 +29,7 @@ import { SupportModule } from './support/support.module';
     WalletModule,
     ReferralsModule,
     CommerceModule,
+    GoodsInvoicesModule,
     MessagingModule,
     IneterestsModule,
     SupportModule,
@@ -35,3 +37,4 @@ import { SupportModule } from './support/support.module';
   ],
 })
 export class AppModule {}
+

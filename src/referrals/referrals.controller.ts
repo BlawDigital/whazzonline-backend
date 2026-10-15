@@ -5,23 +5,52 @@ import {
   Param,
   Req,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { ReferralsService } from './referrals.service';
+import { ReferralsService, referralRules } from './referrals.service';
+import { ReferralQueryDto } from './referral-query.dto';
 
 @Controller('users/:userId/referrals')
 @UseGuards(JwtAuthGuard)
 export class ReferralsController {
   constructor(private readonly referralsService: ReferralsService) {}
 
+  @Get('rules')
+  rules(@Req() request: AuthenticatedRequest, @Param('userId') userId: string) {
+    this.assertOwner(request, userId);
+    return referralRules;
+  }
+
+  @Get('status')
+  list(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Query() query: ReferralQueryDto,
+  ) {
+    this.assertOwner(request, userId);
+    return this.referralsService.list(userId, query);
+  }
+
+  @Get('reward-history')
+  rewards(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Query() query: ReferralQueryDto,
+  ) {
+    this.assertOwner(request, userId);
+    return this.referralsService.rewards(userId, query);
+  }
+
   @Get()
   overview(
     @Req() request: AuthenticatedRequest,
     @Param('userId') userId: string,
+    @Query('compact') compact?: string,
   ) {
     this.assertOwner(request, userId);
-    return this.referralsService.overview(userId);
+    return this.referralsService.overview(userId, compact === 'true');
   }
 
   @Get('details/:referralId')

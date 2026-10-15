@@ -1,3 +1,9 @@
+import { Prisma } from 'generated/prisma/client';
+import {
+  legacyProductOffer,
+  legacyPromotionWhere,
+} from './legacy-product-offer';
+import { addMonths } from '../referrals/merchant-billing.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -67,7 +73,10 @@ export class VendorsService {
 
     const [orderItems, wallet] = await Promise.all([
       this.prisma.commerceOrderItem.findMany({
-        where: { vendorId: userId, order: { status: 'delivered' } },
+        where: {
+          vendorId: userId,
+          order: { paymentStatus: 'paid', invoices: { none: {} } },
+        },
         select: {
           createdAt: true,
           id: true,
@@ -83,8 +92,7 @@ export class VendorsService {
           accountName:
             [user.firstName, user.lastName].filter(Boolean).join(' ') ||
             profile.storeName,
-          accountNumber: `019${userId.replace(/-/g, '').slice(0, 7)}`,
-          bankName: 'Paystack - Titan',
+
           userId,
         },
         update: {},
@@ -102,16 +110,26 @@ export class VendorsService {
 
   async finance(userId: string) {
     const { orderItems, profile, wallet } = await this.financeData(userId);
-    const sales = orderItems.map((item) => ({
-      amount: item.unitPrice * item.quantity,
-      createdAt: item.createdAt,
-      id: item.id,
-      orderId: item.orderId,
-    }));
+    const directInvoices = await this.prisma.goodsInvoice.findMany({
+      where: { vendorId: userId, status: 'PAID' },
+      select: { id: true, subtotal: true, paidAt: true, orderId: true },
+    });
+    const sales = [
+      ...orderItems.map((item) => ({
+        amount: item.unitPrice * item.quantity,
+        createdAt: item.createdAt,
+        id: item.id,
+        orderId: item.orderId,
+      })),
+      ...directInvoices.map((invoice) => ({
+        amount: invoice.subtotal,
+        createdAt: invoice.paidAt!,
+        id: invoice.id,
+        orderId: invoice.orderId,
+      })),
+    ];
     const grossSales = sales.reduce((sum, sale) => sum + sale.amount, 0);
-    const platformFees = Math.round(
-      grossSales * (vendorFinanceConfig.platformFeePercent / 100),
-    );
+    const platformFees = 0;
     const netEarnings = grossSales - platformFees;
     const completedPayouts = wallet.transactions
       .filter((item) => item.status === 'COMPLETED')
@@ -119,20 +137,8 @@ export class VendorsService {
     const pendingPayouts = wallet.transactions
       .filter((item) => item.status === 'PENDING')
       .reduce((sum, item) => sum + Math.abs(item.amount), 0);
-    const availableBalance = Math.max(
-      netEarnings - completedPayouts - pendingPayouts,
-      0,
-    );
-    const fees = sales.map((sale) => ({
-      amount: -Math.round(
-        sale.amount * (vendorFinanceConfig.platformFeePercent / 100),
-      ),
-      createdAt: sale.createdAt.toISOString(),
-      description: 'Platform Service Fee',
-      id: `fee-${sale.id}`,
-      orderId: sale.orderId,
-      type: 'FEE' as const,
-    }));
+    const availableBalance = 0;
+    const fees: typeof saleTransactions = [];
     const saleTransactions = sales.map((sale) => ({
       amount: sale.amount,
       createdAt: sale.createdAt.toISOString(),
@@ -188,7 +194,8 @@ export class VendorsService {
       minimumWithdrawalAmount: vendorFinanceConfig.minimumWithdrawalAmount,
       netEarnings,
       pendingPayouts,
-      platformFeePercent: vendorFinanceConfig.platformFeePercent,
+      paymentModel: 'direct_to_merchant',
+      platformFeePercent: 0,
       platformFees,
       payouts,
       recentEarnings: saleTransactions.slice(0, 5),
@@ -198,29 +205,13 @@ export class VendorsService {
     };
   }
 
-  async requestWithdrawal(userId: string, amount: number) {
-    const data = await this.finance(userId);
-    if (!data.bankAccount.accountNumber || !data.bankAccount.bankName) {
-      throw new BadRequestException(
-        'Add and verify a bank account before withdrawing funds.',
-      );
-    }
-    if (amount > data.availableBalance) {
-      throw new BadRequestException('Withdrawal exceeds available balance.');
-    }
-    const wallet = await this.prisma.wallet.findUnique({ where: { userId } });
-    if (!wallet) throw new NotFoundException('Vendor wallet not found.');
-    return this.prisma.walletTransaction.create({
-      data: {
-        amount: -amount,
-        description: 'Withdrawal to Bank',
-        status: 'PENDING',
-        type: 'WITHDRAWAL',
-        walletId: wallet.id,
-      },
-    });
+  async requestWithdrawal(userId: string, _amount: number) {
+    void _amount;
+    await this.requireVendorUser(userId);
+    throw new BadRequestException(
+      'Goods payments settle directly to your merchant account. There is no Whazzonline goods balance to withdraw.',
+    );
   }
-
   async findProfile(userId: string) {
     await this.requireVendorUser(userId);
     const profile = await this.prisma.vendorProfile.findUnique({
@@ -240,9 +231,14 @@ export class VendorsService {
         products: {
           ...(manage ? {} : { where: { status: 'ACTIVE' as const } }),
           orderBy: { createdAt: 'desc' },
-          include: { aisle: { select: { name: true } }, _count: { select: { likes: true } } },
+          include: {
+            aisle: { select: { name: true } },
+            _count: { select: { likes: true } },
+          },
         },
-        user: { select: { avatarUrl: true, registrationType: true, role: true } },
+        user: {
+          select: { avatarUrl: true, registrationType: true, role: true },
+        },
         trustReviews: {
           orderBy: { createdAt: 'desc' },
           select: {
@@ -303,7 +299,8 @@ export class VendorsService {
         bankName: undefined,
         cacUrl: undefined,
         avatarUrl: user.avatarUrl,
-        isBusiness: user.registrationType === 'BUSINESS' || user.role === 'BUSINESS',
+        isBusiness:
+          user.registrationType === 'BUSINESS' || user.role === 'BUSINESS',
         trustReviewCount: _count.trustReviews,
         trusteeCount: trustees.length,
         trustReviews: trustReviews.map((review) => ({
@@ -506,29 +503,70 @@ export class VendorsService {
       orderBy: { createdAt: 'desc' },
     });
     const now = new Date();
-    return offers.map((offer) => ({
-      ...offer,
-      status:
-        offer.status === 'DRAFT'
-          ? 'DRAFT'
-          : offer.startsAt > now
-            ? 'SCHEDULED'
-            : offer.endsAt <= now
-              ? 'ENDED'
-              : 'ACTIVE',
-      products: offer.products.map(({ product }) => product),
-    }));
+    const legacy = await this.prisma.product.findMany({
+      where: { vendorProfileId: profile.id, ...legacyPromotionWhere(now) },
+    });
+    return [
+      ...offers.map((offer) => ({
+        ...offer,
+        status:
+          offer.status === 'DRAFT'
+            ? 'DRAFT'
+            : offer.startsAt > now
+              ? 'SCHEDULED'
+              : offer.endsAt <= now
+                ? 'ENDED'
+                : 'ACTIVE',
+        products: offer.products.map(({ product }) => product),
+      })),
+      ...legacy.map((product) => ({
+        ...legacyProductOffer(product),
+        products: [product],
+      })),
+    ];
   }
 
-  async createOffer(userId: string, dto: CreateOfferDto) {
+  async createOffer(userId: string, dto: CreateOfferDto, draftId?: string) {
     await this.requireVendorUser(userId);
     const profile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
-      select: { id: true },
+      select: { id: true, city: true, state: true },
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
 
+    const draft = dto.intent === 'DRAFT';
+    if (draftId) {
+      const existing = await this.prisma.offer.findFirst({
+        where: { id: draftId, vendorProfileId: profile.id },
+        include: { products: { include: { product: true } } },
+      });
+      if (!existing) throw new NotFoundException('Draft offer not found.');
+      if (existing.status !== 'DRAFT') {
+        if (
+          dto.requestId &&
+          existing.createRequestId === `${userId}:${dto.requestId}`
+        )
+          return {
+            ...existing,
+            products: existing.products.map(({ product }) => product),
+          };
+        throw new BadRequestException('This offer has already been published.');
+      }
+    } else if (dto.requestId) {
+      const existing = await this.prisma.offer.findUnique({
+        where: { createRequestId: `${userId}:${dto.requestId}` },
+        include: { products: { include: { product: true } } },
+      });
+      if (existing)
+        return {
+          ...existing,
+          products: existing.products.map(({ product }) => product),
+        };
+    }
+
     const productIds = [...new Set(dto.productIds)];
+    if (!draft && !productIds.length)
+      throw new BadRequestException('Select at least one product.');
     const products = await this.prisma.product.findMany({
       where: {
         id: { in: productIds },
@@ -541,7 +579,7 @@ export class VendorsService {
         'Every selected product must be an active product in your store.',
       );
     }
-    if (products.some((product) => product.quantity < 1)) {
+    if (!draft && products.some((product) => product.quantity < 1)) {
       throw new BadRequestException(
         'Out-of-stock products cannot be added to an offer.',
       );
@@ -550,12 +588,13 @@ export class VendorsService {
     const isDiscount =
       dto.type === CreateOfferType.PRICE_DISCOUNT ||
       dto.type === CreateOfferType.FLASH_SALE;
-    if (isDiscount && (!dto.discountType || !dto.discountValue)) {
+    if (!draft && isDiscount && (!dto.discountType || !dto.discountValue)) {
       throw new BadRequestException(
         'Choose a discount type and enter its value.',
       );
     }
     if (
+      !draft &&
       dto.discountType === CreateOfferDiscountType.PERCENTAGE &&
       (dto.discountValue ?? 0) >= 100
     ) {
@@ -563,7 +602,8 @@ export class VendorsService {
     }
 
     const discountedPrice = (unitPrice: number) => {
-      if (!isDiscount || !dto.discountType || !dto.discountValue) return null;
+      if (draft || !isDiscount || !dto.discountType || !dto.discountValue)
+        return null;
       if (dto.discountType === CreateOfferDiscountType.PERCENTAGE) {
         return Math.max(
           1,
@@ -599,14 +639,18 @@ export class VendorsService {
       0,
     );
     if (
+      !draft &&
       dto.type === CreateOfferType.BUNDLE_DEAL &&
-      (!dto.name || !dto.bundlePrice || dto.bundlePrice >= individualTotal)
+      (productIds.length < 2 ||
+        !dto.name ||
+        !dto.bundlePrice ||
+        dto.bundlePrice >= individualTotal)
     ) {
       throw new BadRequestException(
         'Enter a bundle name and a bundle price below the individual total.',
       );
     }
-    if (!isDiscount && dto.type === CreateOfferType.DELIVERY) {
+    if (!draft && dto.type === CreateOfferType.DELIVERY) {
       if (!dto.deliveryType) {
         throw new BadRequestException('Choose a delivery offer type.');
       }
@@ -618,53 +662,148 @@ export class VendorsService {
       }
     }
 
-    const startsAt = new Date();
+    const now = new Date();
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : now;
+    if (!draft && dto.startsAt && startsAt <= now)
+      throw new BadRequestException('Choose a future start date and time.');
     const endsAt = new Date(
       startsAt.getTime() + dto.durationHours * 60 * 60 * 1000,
     );
-    return this.prisma.$transaction(async (transaction) => {
-      const offer = await transaction.offer.create({
-        data: {
-          applicableLocations: dto.applicableLocations ?? [],
-          bundlePrice: dto.bundlePrice,
-          deliveryFee:
-            dto.deliveryType === CreateDeliveryOfferType.FREE
-              ? 0
-              : dto.deliveryFee,
-          deliveryType: dto.deliveryType,
-          discountType: dto.discountType,
-          discountValue: dto.discountValue,
-          endsAt,
-          minimumOrderValue: dto.minimumOrderValue,
-          name: dto.name,
-          products: {
-            create: productIds.map((productId) => ({ productId })),
-          },
-          startsAt,
-          type: dto.type,
-          vendorProfileId: profile.id,
-        },
-        include: { products: { include: { product: true } } },
-      });
-      await Promise.all(
-        promoPrices.map(({ id, price }) =>
-          price === null
-            ? Promise.resolve()
-            : transaction.product.update({
-                where: { id },
-                data: {
-                  promoEndsAt: endsAt,
-                  promoPrice: price,
-                  promoStartsAt: startsAt,
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await this.prisma.$transaction(
+          async (transaction) => {
+            if (!draft) {
+              const conflict = await transaction.offer.findFirst({
+                where: {
+                  ...(draftId ? { id: { not: draftId } } : {}),
+                  vendorProfileId: profile.id,
+                  status: { in: ['ACTIVE', 'SCHEDULED'] },
+                  startsAt: { lt: endsAt },
+                  endsAt: { gt: startsAt },
+                  products: { some: { productId: { in: productIds } } },
                 },
-              }),
-        ),
-      );
-      return {
-        ...offer,
-        products: offer.products.map(({ product }) => product),
-      };
-    });
+              });
+              if (conflict)
+                throw new BadRequestException(
+                  'A selected product already belongs to an offer during this time. Choose a different time or product.',
+                );
+              if (
+                isDiscount &&
+                products.some((p) => p.promoEndsAt && p.promoEndsAt > now)
+              )
+                throw new BadRequestException(
+                  'A selected product has an existing promotion. Wait until it ends before creating another discount.',
+                );
+            }
+            const data = {
+              applicableLocations:
+                dto.type === CreateOfferType.DELIVERY
+                  ? (dto.applicableLocations ?? [])
+                  : [],
+              bundlePrice:
+                dto.type === CreateOfferType.BUNDLE_DEAL
+                  ? (dto.bundlePrice ?? null)
+                  : null,
+              deliveryFee:
+                dto.deliveryType === CreateDeliveryOfferType.FREE
+                  ? 0
+                  : (dto.deliveryFee ?? null),
+              deliveryType:
+                dto.type === CreateOfferType.DELIVERY
+                  ? (dto.deliveryType ?? null)
+                  : null,
+              discountType: isDiscount ? (dto.discountType ?? null) : null,
+              discountValue: isDiscount ? (dto.discountValue ?? null) : null,
+              endsAt,
+              minimumOrderValue: dto.minimumOrderValue ?? null,
+              name: dto.name || products[0]?.name || null,
+              description: dto.description?.trim() || null,
+              mediaUrls: dto.mediaUrls ?? [],
+              stockLimit: isDiscount ? (dto.stockLimit ?? null) : null,
+              status: draft
+                ? ('DRAFT' as const)
+                : startsAt > now
+                  ? ('SCHEDULED' as const)
+                  : ('ACTIVE' as const),
+              startsAt,
+              type: dto.type,
+              vendorProfileId: profile.id,
+            };
+            const offer = await (draftId
+              ? transaction.offer.update({
+                  where: { id: draftId, status: 'DRAFT' },
+                  data: {
+                    ...data,
+                    createRequestId: dto.requestId
+                      ? `${userId}:${dto.requestId}`
+                      : undefined,
+                    products: {
+                      deleteMany: {},
+                      create: productIds.map((productId) => ({ productId })),
+                    },
+                  },
+                  include: { products: { include: { product: true } } },
+                })
+              : transaction.offer.create({
+                  data: {
+                    ...data,
+                    createRequestId: dto.requestId
+                      ? `${userId}:${dto.requestId}`
+                      : null,
+                    products: {
+                      create: productIds.map((productId) => ({ productId })),
+                    },
+                  },
+                  include: { products: { include: { product: true } } },
+                }));
+            await Promise.all(
+              promoPrices.map(({ id, price }) =>
+                price === null || dto.stockLimit || dto.minimumOrderValue
+                  ? Promise.resolve()
+                  : transaction.product.update({
+                      where: { id },
+                      data: {
+                        promoEndsAt: endsAt,
+                        promoPrice: price,
+                        promoStartsAt: startsAt,
+                      },
+                    }),
+              ),
+            );
+            return {
+              ...offer,
+              products: offer.products.map(({ product }) => product),
+            };
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2034' &&
+          attempt < 2
+        )
+          continue;
+        if (
+          dto.requestId &&
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          ['P2002', 'P2025'].includes(error.code)
+        ) {
+          const existing = await this.prisma.offer.findUnique({
+            where: { createRequestId: `${userId}:${dto.requestId}` },
+            include: { products: { include: { product: true } } },
+          });
+          if (existing)
+            return {
+              ...existing,
+              products: existing.products.map(({ product }) => product),
+            };
+        }
+        throw error;
+      }
+    }
+    throw new BadRequestException('The offer changed. Please try again.');
   }
 
   private async requireOwnedProduct(userId: string, productId: string) {
@@ -776,7 +915,13 @@ export class VendorsService {
       where: { userId },
     });
     if (!profile) throw new NotFoundException('Vendor profile not found.');
-    if (dto.representativeName !== undefined && dto.representativeName.trim().length < 2) throw new BadRequestException('A named CEO or authorized representative is required.');
+    if (
+      dto.representativeName !== undefined &&
+      dto.representativeName.trim().length < 2
+    )
+      throw new BadRequestException(
+        'A named CEO or authorized representative is required.',
+      );
     if (dto.featuredProductId) {
       const product = await this.prisma.product.findFirst({
         where: {
@@ -790,7 +935,16 @@ export class VendorsService {
           'Choose an active product from your own store.',
         );
     }
-    return this.prisma.vendorProfile.update({ where: { userId }, data: { ...dto, socialLinks: dto.socialLinks?.map(link => ({ label: link.label.trim(), url: link.url })) } });
+    return this.prisma.vendorProfile.update({
+      where: { userId },
+      data: {
+        ...dto,
+        socialLinks: dto.socialLinks?.map((link) => ({
+          label: link.label.trim(),
+          url: link.url,
+        })),
+      },
+    });
   }
 
   async saveProfile(userId: string, dto: SaveVendorProfileDto) {
@@ -894,9 +1048,12 @@ export class VendorsService {
       );
     }
 
-    const submittedAt = new Date();
+    const submittedAt = existing.submittedAt ?? new Date();
     const representativeName = dto.representativeName?.trim() || '';
-    if (representativeName.length < 2) throw new BadRequestException('Add a named CEO or authorized representative in About before submitting.');
+    if (representativeName.length < 2)
+      throw new BadRequestException(
+        'Add a named CEO or authorized representative in About before submitting.',
+      );
     return this.prisma.vendorProfile.update({
       where: { userId },
       data: {
@@ -907,6 +1064,19 @@ export class VendorsService {
         setupCompleted: true,
         submittedAt,
         termsAcceptedAt: submittedAt,
+        user: {
+          update: {
+            merchantSubscription: {
+              upsert: {
+                create: {
+                  trialStartedAt: submittedAt,
+                  trialEndsAt: addMonths(submittedAt, 1),
+                },
+                update: {},
+              },
+            },
+          },
+        },
       },
     });
   }

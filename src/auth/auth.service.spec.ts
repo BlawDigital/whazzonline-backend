@@ -10,7 +10,12 @@ describe('AuthService contact credentials', () => {
   const prisma = {
     emailOtp: { update: jest.fn() },
     phoneOtp: { updateMany: jest.fn() },
-    user: { findFirst: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+    user: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
   };
   const otpService = {
     consumeVerifiedEmailOtp: jest.fn(),
@@ -33,10 +38,32 @@ describe('AuthService contact credentials', () => {
     jwtService.signAsync.mockResolvedValue('signed-access-token');
   });
 
-  it('rejects seller email registration before querying credentials', async () => {
-    await expect(service.register({ email: 'seller@example.com', password: 'example-password', registrationType: 'SELLER' } as never)).rejects.toThrow('Sellers must sign up');
-    expect(prisma.user.findUnique).not.toHaveBeenCalled();
-  });
+  it('creates merchant email accounts for connected payment and invoice workflows', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    prisma.user.create.mockResolvedValue({
+      id: 'seller-email',
+      phone: null,
+      email: 'seller@example.com',
+      role: 'VENDOR',
+      registrationType: 'SELLER',
+      isActive: true,
+      isVerified: true,
+    });
+    const result = await service.register({
+      email: 'seller@example.com',
+      password: 'example-password',
+      registrationType: 'SELLER',
+    });
+    expect(result.accessToken).toBe('signed-access-token');
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          role: 'VENDOR',
+          registrationType: 'SELLER',
+        }),
+      }),
+    );
+  }, 20000);
 
   it('issues a token when phone verification restores an existing user', async () => {
     otpService.verifyPhoneOtp.mockResolvedValue({
