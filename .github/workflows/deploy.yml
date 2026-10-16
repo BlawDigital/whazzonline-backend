@@ -141,18 +141,19 @@ jobs:
             >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Test SSH authentication
+          
+      - name: Diagnose SSH authentication
         env:
           CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
           CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
           CPANEL_USER: ${{ secrets.CPANEL_USER }}
         run: |
-          ssh \
+          ssh -vvv \
             -o BatchMode=yes \
+            -o PreferredAuthentications=publickey \
             -p "$CPANEL_PORT" \
             "$CPANEL_USER@$CPANEL_HOST" \
-            'echo "SSH authentication successful"'      
-      
+            'echo "SSH authentication successful"'
 
 
 
