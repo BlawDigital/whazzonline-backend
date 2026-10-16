@@ -84,7 +84,7 @@ jobs:
           name: whazzonline-backend
           path: deploy.tar.gz
           retention-days: 1
-          
+
   deploy:
     name: Deploy to Namecheap
     needs: build
@@ -93,6 +93,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' ||
        github.event_name == 'workflow_dispatch')
+
     steps:
       - name: Download deployment artifact
         uses: actions/download-artifact@v4
@@ -105,13 +106,38 @@ jobs:
           CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
           CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
         run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
+          set -e
+
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+
+          # Confirm the existing private key can be read.
+          # Only its public-key fingerprint is printed.
+          ssh-keygen -y -f "$HOME/.ssh/deploy_key" \
+            > "$HOME/.ssh/deploy_key.pub"
+          ssh-keygen -lf "$HOME/.ssh/deploy_key.pub"
 
           ssh-keyscan -p "$CPANEL_PORT" "$CPANEL_HOST" \
-            >> ~/.ssh/known_hosts
+            >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Test SSH authentication
+        env:
+          CPANEL_HOST: ${{ secrets.CPANEL_HOST }}
+          CPANEL_PORT: ${{ secrets.CPANEL_PORT }}
+          CPANEL_USER: ${{ secrets.CPANEL_USER }}
+        run: |
+          ssh \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -i "$HOME/.ssh/deploy_key" \
+            -p "$CPANEL_PORT" \
+            "$CPANEL_USER@$CPANEL_HOST" \
+            'echo "SSH authentication successful"'
 
       - name: Upload deployment archive
         env:
@@ -120,7 +146,10 @@ jobs:
           CPANEL_USER: ${{ secrets.CPANEL_USER }}
           CPANEL_APP_ROOT: ${{ secrets.CPANEL_APP_ROOT }}
         run: |
-          scp -i ~/.ssh/deploy_key \
+          scp \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -i "$HOME/.ssh/deploy_key" \
             -P "$CPANEL_PORT" \
             deploy.tar.gz \
             "$CPANEL_USER@$CPANEL_HOST:$CPANEL_APP_ROOT/tmp/deploy.tar.gz"
@@ -132,7 +161,10 @@ jobs:
           CPANEL_USER: ${{ secrets.CPANEL_USER }}
           CPANEL_APP_ROOT: ${{ secrets.CPANEL_APP_ROOT }}
         run: |
-          ssh -i ~/.ssh/deploy_key \
+          ssh \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -i "$HOME/.ssh/deploy_key" \
             -p "$CPANEL_PORT" \
             "$CPANEL_USER@$CPANEL_HOST" \
             "cd '$CPANEL_APP_ROOT' &&
