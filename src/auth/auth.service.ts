@@ -206,7 +206,7 @@ export class AuthService {
       throw new NotFoundException('No account was found for this email.');
     await this.otpService.verifyEmailOtp(
       normalizedEmail,
-      code, 
+      code,
       'PASSWORD_RESET',
       user.id,
     );
@@ -235,138 +235,144 @@ export class AuthService {
   // ============================================================
   // REGISTER
   // ============================================================
-// ============================================================
-// REGISTER
-// ============================================================
-
-async register(registerDto: RegisterDto) {
-  const {
-    phone,
-    firstName,
-    lastName,
-    email,
-    registrationType,
-    password,
-  } = registerDto;
-
-  const normalizedPhone = phone ? normalizePhone(phone) : undefined;
-  const normalizedEmail = email?.trim().toLowerCase();
-
-  // At least one contact method is required
-  if (!normalizedPhone && !normalizedEmail) {
-    throw new ConflictException('Email or phone number is required.');
-  }
-
-  // Email registration requires a password
-  if (normalizedEmail && !password) {
-    throw new ConflictException(
-      'A password is required for email sign-up.',
-    );
-  }
-
   // ============================================================
-  // CHECK PHONE
+  // REGISTER
   // ============================================================
 
-  if (normalizedPhone) {
-    const existingPhone = await this.prisma.user.findFirst({
-      where: {
-        phone: {
-          in: phoneLookupCandidates(normalizedPhone),
-        },
-      },
-    });
-
-    if (existingPhone) {
-      throw new ConflictException(
-        'An account with this phone number already exists.',
-      );
-    }
-  }
-
-  // ============================================================
-  // CHECK EMAIL
-  // ============================================================
-
-  if (normalizedEmail) {
-    const existingEmail = await this.prisma.user.findUnique({
-      where: {
-        email: normalizedEmail,
-      },
-    });
-
-    if (existingEmail) {
-      throw new ConflictException(
-        'An account with this email already exists.',
-      );
-    }
-  }
-
-  // ============================================================
-  // HASH PASSWORD
-  // ============================================================
-
-  const passwordHash = password
-    ? await bcrypt.hash(password, 12)
-    : null;
-
-  // ============================================================
-  // DETERMINE ROLE
-  // ============================================================
-
-  const roleByRegistrationType = {
-    BUYER: 'CUSTOMER',
-    SELLER: 'VENDOR',
-    BUSINESS: 'BUSINESS',
-  } as const;
-
-  const role = roleByRegistrationType[registrationType];
-  const referrer = registerDto.referralCode
-    ? await this.prisma.user.findFirst({ where: { referralCode: registerDto.referralCode, isActive: true, isVerified: true } })
-    : null;
-  if (registerDto.referralCode && !referrer) throw new BadRequestException('This referral link is invalid or no longer active.');
-  if (registerDto.referralCode && registrationType === 'BUYER') throw new BadRequestException('This invitation is for a merchant account. Choose Seller or Business to continue.');
-
-  // ============================================================
-  // CREATE ACCOUNT
-  // ============================================================
-
-  const user = await this.prisma.user.create({
-    data: {
-      phone: normalizedPhone,
+  async register(registerDto: RegisterDto) {
+    const {
+      phone,
       firstName,
       lastName,
-      email: normalizedEmail,
-      passwordHash,
+      email,
       registrationType,
-      role,
-      ...(referrer ? { referredBy: { create: { referrerUserId: referrer.id, refereeName: [firstName, lastName].filter(Boolean).join(' ') || 'New merchant', rewardAmount: 0 } } } : {}),
+      password,
+    } = registerDto;
 
-      authProvider: normalizedPhone
-        ? 'PHONE'
-        : 'EMAIL',
+    const normalizedPhone = phone ? normalizePhone(phone) : undefined;
+    const normalizedEmail = email?.trim().toLowerCase();
 
-      // TEMPORARY: OTP verification bypassed
-      isVerified: true,
+    // At least one contact method is required
+    if (!normalizedPhone && !normalizedEmail) {
+      throw new ConflictException('Email or phone number is required.');
+    }
 
-      // Since email verification is currently bypassed too
-      emailVerified: Boolean(normalizedEmail),
-    },
-  });
+    // Email registration requires a password
+    // if (normalizedEmail && !password) {
+    //   throw new ConflictException(
+    //     'A password is required for email sign-up.',
+    //   );
+    // }
 
-  // ============================================================
-  // GENERATE LOGIN TOKEN
-  // ============================================================
+    // All new accounts require a password for future sign-in.
+    if (!password) {
+      throw new BadRequestException(
+        'A password is required to create an account.',
+      );
+    }
+    // ============================================================
+    // CHECK PHONE
+    // ============================================================
 
-  const accessToken = await this.generateToken(user);
+    if (normalizedPhone) {
+      const existingPhone = await this.prisma.user.findFirst({
+        where: {
+          phone: {
+            in: phoneLookupCandidates(normalizedPhone),
+          },
+        },
+      });
 
-  return {
-    message: 'Account created successfully.',
-    accessToken,
-    user: this.toPublicUser(user),
-  };
-}
- 
+      if (existingPhone) {
+        throw new ConflictException(
+          'An account with this phone number already exists.',
+        );
+      }
+    }
+
+    // ============================================================
+    // CHECK EMAIL
+    // ============================================================
+
+    if (normalizedEmail) {
+      const existingEmail = await this.prisma.user.findUnique({
+        where: {
+          email: normalizedEmail,
+        },
+      });
+
+      if (existingEmail) {
+        throw new ConflictException(
+          'An account with this email already exists.',
+        );
+      }
+    }
+
+    // ============================================================
+    // HASH PASSWORD
+    // ============================================================
+
+    const passwordHash = password
+      ? await bcrypt.hash(password, 12)
+      : null;
+
+    // ============================================================
+    // DETERMINE ROLE
+    // ============================================================
+
+    const roleByRegistrationType = {
+      BUYER: 'CUSTOMER',
+      SELLER: 'VENDOR',
+      BUSINESS: 'BUSINESS',
+    } as const;
+
+    const role = roleByRegistrationType[registrationType];
+    const referrer = registerDto.referralCode
+      ? await this.prisma.user.findFirst({ where: { referralCode: registerDto.referralCode, isActive: true, isVerified: true } })
+      : null;
+    if (registerDto.referralCode && !referrer) throw new BadRequestException('This referral link is invalid or no longer active.');
+    if (registerDto.referralCode && registrationType === 'BUYER') throw new BadRequestException('This invitation is for a merchant account. Choose Seller or Business to continue.');
+
+    // ============================================================
+    // CREATE ACCOUNT
+    // ============================================================
+
+    const user = await this.prisma.user.create({
+      data: {
+        phone: normalizedPhone,
+        firstName,
+        lastName,
+        email: normalizedEmail,
+        passwordHash,
+        registrationType,
+        role,
+        ...(referrer ? { referredBy: { create: { referrerUserId: referrer.id, refereeName: [firstName, lastName].filter(Boolean).join(' ') || 'New merchant', rewardAmount: 0 } } } : {}),
+
+        authProvider: normalizedPhone
+          ? 'PHONE'
+          : 'EMAIL',
+
+        // TEMPORARY: OTP verification bypassed
+        isVerified: true,
+
+        // Since email verification is currently bypassed too
+        emailVerified: Boolean(normalizedEmail),
+      },
+    });
+
+    // ============================================================
+    // GENERATE LOGIN TOKEN
+    // ============================================================
+
+    const accessToken = await this.generateToken(user);
+
+    return {
+      message: 'Account created successfully.',
+      accessToken,
+      user: this.toPublicUser(user),
+    };
+  }
+
   // ============================================================
   // LOGIN
   // ============================================================
@@ -429,9 +435,10 @@ async register(registerDto: RegisterDto) {
     return this.toPublicUser(user);
   }
 
-  async updateProfile( userId: string,updateProfileDto: UpdateProfileDto,) {
+  async updateProfile(userId: string, updateProfileDto: UpdateProfileDto,) {
     const user = await this.prisma.user.findUnique({
-      where: {        id: userId,
+      where: {
+        id: userId,
       },
     });
 
@@ -449,24 +456,24 @@ async register(registerDto: RegisterDto) {
     } = updateProfileDto;
 
     let interestIds: string[] | undefined;
-    if(interests !== undefined){
+    if (interests !== undefined) {
 
       const uniqueSlugs = [...new Set(interests.map((slug) => slug.trim().toLowerCase()).filter(Boolean),)];
       const interestRecords = await this.prisma.interest.findMany({
-        where:{
-          slug:{
+        where: {
+          slug: {
             in: uniqueSlugs,
           },
         },
-        select:{
+        select: {
           id: true,
           slug: true,
         },
       });
-      if(interestRecords.length !== uniqueSlugs.length){
+      if (interestRecords.length !== uniqueSlugs.length) {
         throw new BadRequestException("One or more selected interests are invalid.",);
       }
-      interestIds= interestRecords.map((interest)=> interest.id);
+      interestIds = interestRecords.map((interest) => interest.id);
     }
 
     const updatedUser = await this.prisma.user.update({
@@ -494,15 +501,15 @@ async register(registerDto: RegisterDto) {
         ...(city !== undefined && {
           city: city.trim(),
         }),
-        ...(interestIds !== undefined &&{
-          interests:{
+        ...(interestIds !== undefined && {
+          interests: {
             set: interestIds.map((id) => ({
               id,
             })),
           },
         }),
       },
-      include:{
+      include: {
         interests: true,
       },
     });
@@ -514,7 +521,7 @@ async register(registerDto: RegisterDto) {
   }
 
 
-  private toPublicUser<T extends {  passwordHash: unknown;  vendorProfile?: { setupCompleted: boolean; storeName?: string } | null;},>(user: T) {
+  private toPublicUser<T extends { passwordHash: unknown; vendorProfile?: { setupCompleted: boolean; storeName?: string } | null; },>(user: T) {
     const { passwordHash: _passwordHash, vendorProfile, ...publicUser } = user;
     return {
       ...publicUser,
