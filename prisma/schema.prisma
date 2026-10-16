@@ -38,6 +38,7 @@ enum EmailOtpPurpose {
 enum PhoneOtpPurpose {
   PHONE_CHANGE
   REGISTRATION
+  PASSWORD_RESET
 }
 
 model User {

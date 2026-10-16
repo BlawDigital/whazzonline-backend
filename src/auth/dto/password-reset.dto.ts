@@ -4,11 +4,22 @@ import {
   IsString,
   Length,
   MinLength,
+  IsOptional,
+  ValidateIf,
 } from 'class-validator';
 
 export class PasswordResetRequestDto {
+  @ValidateIf(
+    (value: PasswordResetRequestDto) =>
+      value.email !== undefined || !value.phone,
+  )
   @IsEmail()
-  email!: string;
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  phone?: string;
 }
 
 export class PasswordResetVerifyDto extends PasswordResetRequestDto {
