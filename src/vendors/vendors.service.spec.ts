@@ -216,6 +216,39 @@ describe('VendorsService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('updates the representative photo without changing seller verification or setup', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue({
+      representativePhotoUrl: null,
+      setupCompleted: true,
+      reviewStatus: 'APPROVED',
+    });
+    prisma.vendorProfile.update.mockResolvedValue({
+      representativePhotoUrl: '/uploads/vendors/representative.png',
+      setupCompleted: true,
+    });
+    await service.saveRepresentativePhoto(
+      'vendor-id',
+      '/uploads/vendors/representative.png',
+    );
+    expect(prisma.vendorProfile.update).toHaveBeenCalledWith({
+      where: { userId: 'vendor-id' },
+      data: { representativePhotoUrl: '/uploads/vendors/representative.png' },
+    });
+  });
+
+  it('requires an existing merchant profile before saving a representative photo', async () => {
+    prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
+    prisma.vendorProfile.findUnique.mockResolvedValue(null);
+    await expect(
+      service.saveRepresentativePhoto(
+        'vendor-id',
+        '/uploads/vendors/representative.png',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.vendorProfile.update).not.toHaveBeenCalled();
+  });
+
   it('keeps setup in draft after identity uploads', async () => {
     prisma.user.findUnique.mockResolvedValue({ role: 'VENDOR' });
     prisma.vendorProfile.findUnique.mockResolvedValue({

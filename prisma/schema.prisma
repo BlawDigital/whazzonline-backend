@@ -276,6 +276,7 @@ model VendorProfile {
   representativeName String?
   representativeRole String?
   representativeBio  String?
+  representativePhotoUrl String?
   logoUrl            String?
   bannerUrl          String?
   cacUrl             String?

@@ -189,13 +189,24 @@ export class MessagingService {
     });
     // Reserved order threads only expose an order link after checking both participants.
     const orderIds = conversations.flatMap((conversation) => {
-      const match = conversation.clientThreadId?.match(/^order:([0-9a-f-]{36}):/i);
+      const match = conversation.clientThreadId?.match(
+        /^order:([0-9a-f-]{36}):/i,
+      );
       return match ? [match[1]] : [];
     });
-    const orders = orderIds.length ? await this.prisma.commerceOrder.findMany({
-      where: { id: { in: orderIds }, OR: [{ userId }, { items: { some: { vendorId: userId } } }] },
-      select: { id: true, userId: true, items: { select: { vendorId: true } } },
-    }) : [];
+    const orders = orderIds.length
+      ? await this.prisma.commerceOrder.findMany({
+          where: {
+            id: { in: orderIds },
+            OR: [{ userId }, { items: { some: { vendorId: userId } } }],
+          },
+          select: {
+            id: true,
+            userId: true,
+            items: { select: { vendorId: true } },
+          },
+        })
+      : [];
     return {
       conversations: await Promise.all(
         conversations.map(async (conversation) => {
@@ -210,11 +221,19 @@ export class MessagingService {
               ...(lastRead ? { createdAt: { gt: lastRead } } : {}),
             },
           });
-          const order = orders.find((order) =>
-            conversation.clientThreadId === `order:${order.id}:${conversation.vendorProfileId}` &&
-            conversation.buyerUserId === order.userId &&
-            order.items.some((item) => item.vendorId === conversation.vendorProfile.userId));
-          return { ...this.mapConversation(conversation, userId, unread), ...(order ? { orderId: order.id } : {}) };
+          const order = orders.find(
+            (order) =>
+              conversation.clientThreadId ===
+                `order:${order.id}:${conversation.vendorProfileId}` &&
+              conversation.buyerUserId === order.userId &&
+              order.items.some(
+                (item) => item.vendorId === conversation.vendorProfile.userId,
+              ),
+          );
+          return {
+            ...this.mapConversation(conversation, userId, unread),
+            ...(order ? { orderId: order.id } : {}),
+          };
         }),
       ),
       messagesByConversation: {},
@@ -340,7 +359,9 @@ export class MessagingService {
     } else if (dto.newThread) {
       const clientThreadId = dto.clientThreadId || randomUUID();
       if (clientThreadId.startsWith('order:'))
-        throw new BadRequestException('Order conversations must be opened from an order.');
+        throw new BadRequestException(
+          'Order conversations must be opened from an order.',
+        );
       record = await this.prisma.conversation.upsert({
         where: { clientThreadId },
         create: {
@@ -442,7 +463,20 @@ export class MessagingService {
       where: { conversationId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    return messages.map((message) => this.mapMessage(message, userId));
+    const displayedInvoices = new Set<string>();
+    const announcements = new Set<string>();
+    return messages.flatMap((message) => {
+      const mapped = this.mapMessage(message, userId);
+      if (message.invoiceId) {
+        const announcement = JSON.stringify([message.invoiceId, message.text]);
+        if (announcements.has(announcement)) return [];
+        announcements.add(announcement);
+        if (displayedInvoices.has(message.invoiceId))
+          mapped.invoiceId = undefined;
+        displayedInvoices.add(message.invoiceId);
+      }
+      return [mapped];
+    });
   }
   async read(userId: string, id: string) {
     const conversation = await this.requireParticipant(userId, id);
@@ -462,7 +496,7 @@ export class MessagingService {
     if (dto.clientMessageId) {
       const existing = await this.prisma.chatMessage.findUnique({
         where: {
-          conversationId_clientMessageId:  {
+          conversationId_clientMessageId: {
             clientMessageId: dto.clientMessageId,
             conversationId,
           },
@@ -555,4 +589,3 @@ export class MessagingService {
     return { conversationId, typing };
   }
 }
-

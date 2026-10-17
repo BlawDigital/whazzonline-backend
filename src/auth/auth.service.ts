@@ -577,6 +577,7 @@ export class AuthService {
     },
   >(user: T) {
     const { passwordHash: _passwordHash, vendorProfile, ...publicUser } = user;
+    void _passwordHash;
     return {
       ...publicUser,
       vendorSetupCompleted: vendorProfile?.setupCompleted ?? false,

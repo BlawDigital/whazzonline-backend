@@ -962,6 +962,28 @@ export class VendorsService {
     });
   }
 
+  async saveRepresentativePhoto(
+    userId: string,
+    representativePhotoUrl: string,
+  ) {
+    await this.requireVendorUser(userId);
+    const existing = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+    });
+    if (!existing)
+      throw new NotFoundException(
+        'Save the vendor profile before uploading a representative photo.',
+      );
+    const updated = await this.prisma.vendorProfile.update({
+      where: { userId },
+      data: { representativePhotoUrl },
+    });
+    if (existing.representativePhotoUrl !== representativePhotoUrl) {
+      await removeVendorUploadUrl(existing.representativePhotoUrl);
+    }
+    return updated;
+  }
+
   async saveIdentity(
     userId: string,
     uploads: { bannerUrl?: string; cacUrl?: string; logoUrl?: string },

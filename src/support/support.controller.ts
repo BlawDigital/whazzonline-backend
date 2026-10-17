@@ -67,6 +67,17 @@ abstract class SupportControllerBase {
   }
 }
 
+@Controller('support')
+export class PublicSupportController {
+  @Get('contact')
+  contact() {
+    return {
+      phone: process.env.SUPPORT_PHONE?.trim() || null,
+      email: process.env.SUPPORT_EMAIL?.trim() || null,
+    };
+  }
+}
+
 @Controller('seller/support')
 @UseGuards(JwtAuthGuard)
 export class SellerSupportController extends SupportControllerBase {

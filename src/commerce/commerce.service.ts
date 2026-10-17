@@ -13,8 +13,9 @@ import { CreateReturnDto } from './dto/create-return.dto';
 import { CreateTrustReviewDto } from './dto/create-trust-review.dto';
 import { ReportOrderIssueDto } from './dto/report-order-issue.dto';
 import { GuestCheckoutDto } from './dto/guest-checkout.dto';
+import { lockOrder } from './fulfillment';
+import { normalizeOrderStatus } from './order-status';
 
-const SERVICE_FEE = 0;
 // Delivery charges will now need to be agreed on the merchant invoice side; no platform shipping charge for now.
 const DELIVERY_FEE = 0;
 
@@ -88,6 +89,8 @@ export class CommerceService {
     completedAt: Date | null;
     deliveryAddress: string;
     status: string;
+    paymentStatus?: string;
+    paymentMethod?: string;
     subtotal: number;
     serviceFee: number;
     deliveryFee: number;
@@ -122,6 +125,8 @@ export class CommerceService {
         ? ('requested' as const)
         : undefined,
       status: order.status,
+      paymentStatus: order.paymentStatus,
+      paymentMethod: order.paymentMethod,
       total: order.total,
       trustedVendorIds: order.trustReviews.map(
         (review) => review.vendorProfile.userId,
@@ -258,8 +263,6 @@ export class CommerceService {
         'A cart item was submitted more than once.',
       );
     }
-
-    const isPayOnDelivery = dto.paymentMethod === 'pay_on_delivery';
 
     const cartItems = await this.prisma.commerceCartItem.findMany({
       where: {
@@ -403,23 +406,59 @@ export class CommerceService {
   }
 
   async completeOrder(userId: string, id: string) {
-    const order = await this.prisma.commerceOrder.findFirst({
-      where: { id, userId },
+    return this.prisma.$transaction(async (tx) => {
+      await lockOrder(tx, id);
+      const order = await tx.commerceOrder.findFirst({
+        where: { id, userId },
+      });
+      if (!order) throw new NotFoundException('Order not found.');
+      if (order.paymentStatus !== 'paid')
+        throw new BadRequestException(
+          'Payment must be confirmed before completing the order.',
+        );
+      if (order.status === 'delivered' && order.completedAt) {
+        return { completedAt: order.completedAt.toISOString(), id };
+      }
+      if (
+        !['processing', 'ready', 'out_for_delivery'].includes(
+          normalizeOrderStatus(order.status),
+        )
+      ) {
+        throw new BadRequestException(
+          'Only an accepted order can be confirmed as delivered.',
+        );
+      }
+      const completedAt = new Date();
+      const fulfillments = await tx.sellerFulfillment.findMany({
+        where: { orderId: id },
+      });
+      for (const fulfillment of fulfillments) {
+        if (
+          ['rejected', 'delivered'].includes(
+            normalizeOrderStatus(fulfillment.status),
+          )
+        )
+          continue;
+        await tx.sellerFulfillment.update({
+          where: { id: fulfillment.id },
+          data: {
+            status: 'delivered',
+            history: {
+              create: {
+                status: 'delivered',
+                actorUserId: userId,
+                reason: 'Buyer confirmed receipt',
+              },
+            },
+          },
+        });
+      }
+      await tx.commerceOrder.update({
+        where: { id },
+        data: { completedAt, status: 'delivered' },
+      });
+      return { completedAt: completedAt.toISOString(), id };
     });
-    if (!order) throw new NotFoundException('Order not found.');
-    if (order.paymentStatus !== 'paid')
-      throw new BadRequestException(
-        'Payment must be confirmed before completing the order.',
-      );
-    if (order.status === 'delivered' && order.completedAt) {
-      return { completedAt: order.completedAt.toISOString(), id };
-    }
-    const completedAt = new Date();
-    await this.prisma.commerceOrder.update({
-      where: { id },
-      data: { completedAt, status: 'delivered' },
-    });
-    return { completedAt: completedAt.toISOString(), id };
   }
 
   async reportIssue(userId: string, dto: ReportOrderIssueDto) {

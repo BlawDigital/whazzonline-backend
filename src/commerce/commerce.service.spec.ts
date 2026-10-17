@@ -9,15 +9,21 @@ import { CommerceService } from './commerce.service';
 
 describe('CommerceService trust reviews', () => {
   const prisma = {
+    $queryRaw: jest.fn(),
     $transaction: jest.fn(),
     commerceCartItem: { deleteMany: jest.fn(), findMany: jest.fn() },
     commerceOrder: {
       create: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn(),
+      update: jest.fn(),
     },
     product: { findFirst: jest.fn() },
-    sellerFulfillment: { create: jest.fn() },
+    sellerFulfillment: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
     productLike: {
       count: jest.fn(),
       deleteMany: jest.fn(),
@@ -36,8 +42,8 @@ describe('CommerceService trust reviews', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.$transaction.mockImplementation(
-      async (operation: (transaction: typeof prisma) => unknown) =>
-        operation(prisma),
+      (operation: (transaction: typeof prisma) => unknown) =>
+        Promise.resolve(operation(prisma)),
     );
   });
 

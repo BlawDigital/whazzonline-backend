@@ -317,6 +317,40 @@ export class VendorsController {
     return this.vendorsService.saveProfile(userId, dto);
   }
 
+  @Post(':userId/representative-photo')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [{ name: 'photo', maxCount: 1 }],
+      vendorUploadOptions,
+    ),
+  )
+  async saveRepresentativePhoto(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @UploadedFiles() files: { photo?: Express.Multer.File[] },
+  ) {
+    const uploaded = files?.photo ?? [];
+    if (request.user.sub !== userId) {
+      await removeUploadedFiles(uploaded);
+      throw new ForbiddenException(
+        'You can only manage your own representative photo.',
+      );
+    }
+    const photo = uploaded[0];
+    if (!photo)
+      throw new BadRequestException('Select a representative photo to upload.');
+    try {
+      return await this.vendorsService.saveRepresentativePhoto(
+        userId,
+        publicVendorUploadUrl(photo),
+      );
+    } catch (error) {
+      await removeUploadedFiles(uploaded);
+      throw error;
+    }
+  }
+
   @Post(':userId/identity')
   @UseGuards(JwtAuthGuard)
   @UseInterceptors(

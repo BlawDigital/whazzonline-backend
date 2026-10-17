@@ -11,6 +11,13 @@ import { EMAIL_OTP_PROVIDER } from './otp/email-otp.provider';
 
 const databaseTests =
   process.env.RUN_WEBAPP_DATABASE_TESTS === '1' ? describe : describe.skip;
+jest.mock('../vendors/vendor-upload.config', () => ({
+  vendorUploadOptions: {},
+  publicVendorUploadUrl: (file: Express.Multer.File) =>
+    `/uploads/vendors/${file.originalname}`,
+  removeUploadedFiles: jest.fn().mockResolvedValue(undefined),
+  removeVendorUploadUrl: jest.fn().mockResolvedValue(undefined),
+}));
 databaseTests('registered accounts across the complete web API', () => {
   jest.setTimeout(180000);
   let app: INestApplication<Server>;
@@ -24,6 +31,7 @@ databaseTests('registered accounts across the complete web API', () => {
   const emailCodes = new Map<string, string>();
   const smsCodes = new Map<string, string>();
   let productId: string;
+  let orderId: string;
   beforeAll(async () => {
     const database = await isolatedInvoiceDatabase();
     db = database.prisma;
@@ -158,6 +166,52 @@ databaseTests('registered accounts across the complete web API', () => {
       ]),
     );
   });
+  it('persists a representative photo, exposes it on the storefront and prevents cross-account uploads', async () => {
+    const before = await db.vendorProfile.findUniqueOrThrow({
+      where: { userId: seller.user.id },
+    });
+    const image = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jfN8AAAAASUVORK5CYII=',
+      'base64',
+    );
+    await api()
+      .post(`/vendors/${seller.user.id}/representative-photo`)
+      .set('Authorization', bearer(seller))
+      .attach('photo', image, 'representative.png')
+      .expect(201);
+    const after = await db.vendorProfile.findUniqueOrThrow({
+      where: { userId: seller.user.id },
+    });
+    expect(after.representativePhotoUrl).toBe(
+      '/uploads/vendors/representative.png',
+    );
+    expect(after.setupCompleted).toBe(before.setupCompleted);
+    expect(after.reviewStatus).toBe(before.reviewStatus);
+    const catalog = await api().get('/buyer/marketplace').expect(200);
+    expect(
+      (
+        catalog.body as {
+          vendors: { id: string; representativePhotoUrl?: string }[];
+        }
+      ).vendors,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: seller.user.id,
+          representativePhotoUrl: '/uploads/vendors/representative.png',
+        }),
+      ]),
+    );
+    await api()
+      .post(`/vendors/${seller.user.id}/representative-photo`)
+      .set('Authorization', bearer(buyer))
+      .attach('photo', image, 'other.png')
+      .expect(403);
+    await api()
+      .post(`/vendors/${seller.user.id}/representative-photo`)
+      .set('Authorization', bearer(seller))
+      .expect(400);
+  });
   it('opens seller offers and creates the exact JSON used by the web wizard', async () => {
     await api()
       .get(`/vendors/${seller.user.id}/manage-storefront`)
@@ -206,6 +260,33 @@ databaseTests('registered accounts across the complete web API', () => {
       .expect(200);
   });
   it('opens buying, adds a real product and creates an order without external payment calls', async () => {
+    const quoted = await api()
+      .post('/invoices/quote')
+      .send({ items: [{ productId, quantity: 1 }] })
+      .expect(201);
+    const catalogPrices = await api().get('/buyer/marketplace').expect(200);
+    expect(
+      (catalogPrices.body as { products: { id: string; salePrice?: string }[] })
+        .products,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: productId, salePrice: '₦8,000' }),
+      ]),
+    );
+    expect(quoted.body).toMatchObject({
+      subtotal: 8000,
+      originalSubtotal: 10000,
+      discount: 2000,
+      total: 8000,
+    });
+    expect(
+      (await db.product.findUniqueOrThrow({ where: { id: productId } }))
+        .quantity,
+    ).toBe(10);
+    await api()
+      .post('/invoices/quote')
+      .send({ items: [{ productId, quantity: 0 }] })
+      .expect(400);
     await api()
       .get('/buyer/cart')
       .set('Authorization', bearer(buyer))
@@ -233,6 +314,33 @@ databaseTests('registered accounts across the complete web API', () => {
       })
       .expect(201);
     expect(checkout.body).toBeDefined();
+    orderId = (checkout.body as { id: string }).id;
+    expect(checkout.body).toMatchObject({ total: 8000 });
+    const payable = await api()
+      .get(
+        `/invoices/${(checkout.body as { invoices: { id: string }[] }).invoices[0].id}`,
+      )
+      .set('Authorization', bearer(buyer))
+      .expect(200);
+    expect(payable.body).toMatchObject({
+      subtotal: 8000,
+      total: 8000,
+      items: [
+        expect.objectContaining({ unitPrice: 8000, originalPrice: 10000 }),
+      ],
+    });
+    const paidReceipt = await api()
+      .post(
+        `/invoices/${(checkout.body as { invoices: { id: string }[] }).invoices[0].id}/confirm`,
+      )
+      .set('Authorization', bearer(seller))
+      .send({ received: true, reference: 'offer-test-bank-credit' })
+      .expect(201);
+    expect(paidReceipt.body).toMatchObject({
+      status: 'PAID',
+      total: 8000,
+      receiptNumber: expect.any(String),
+    });
     await api()
       .get('/buyer/cart')
       .set('Authorization', bearer(buyer))
@@ -241,6 +349,78 @@ databaseTests('registered accounts across the complete web API', () => {
       .get('/buyer/conversations')
       .set('Authorization', bearer(buyer))
       .expect(200);
+  });
+
+  it('serves real purchase states and confirms receipt only for a paid accepted order owned by the buyer', async () => {
+    for (const status of ['confirmed', 'processing', 'rejected', 'delivered']) {
+      await db.commerceOrder.update({
+        where: { id: orderId },
+        data: { status },
+      });
+      const snapshot = await api()
+        .get('/buyer/cart')
+        .set('Authorization', bearer(buyer))
+        .expect(200);
+      const body = snapshot.body as {
+        ongoingOrders: {
+          id: string;
+          status: string;
+          paymentSummary: { subtotal: number };
+          paymentStatus: string;
+        }[];
+        completedOrders: { id: string; status: string }[];
+      };
+      expect([...body.ongoingOrders, ...body.completedOrders]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: orderId, status }),
+        ]),
+      );
+    }
+    await db.commerceOrder.update({
+      where: { id: orderId },
+      data: { status: 'rejected', paymentStatus: 'paid', completedAt: null },
+    });
+    await api()
+      .patch(`/buyer/orders/${orderId}`)
+      .set('Authorization', bearer(buyer))
+      .expect(400);
+    await db.commerceOrder.update({
+      where: { id: orderId },
+      data: { status: 'processing', paymentStatus: 'pending' },
+    });
+    await api()
+      .patch(`/buyer/orders/${orderId}`)
+      .set('Authorization', bearer(buyer))
+      .expect(400);
+    await api()
+      .patch(`/buyer/orders/${orderId}`)
+      .set('Authorization', bearer(seller))
+      .expect(404);
+    await db.commerceOrder.update({
+      where: { id: orderId },
+      data: { paymentStatus: 'paid' },
+    });
+    await api()
+      .patch(`/buyer/orders/${orderId}`)
+      .set('Authorization', bearer(buyer))
+      .expect(200);
+    const completed = await db.commerceOrder.findUniqueOrThrow({
+      where: { id: orderId },
+      include: { fulfillments: { include: { history: true } } },
+    });
+    expect(completed.status).toBe('delivered');
+    expect(completed.completedAt).toBeInstanceOf(Date);
+    expect(
+      completed.fulfillments.every((row) => row.status === 'delivered'),
+    ).toBe(true);
+    const repeated = await api()
+      .patch(`/buyer/orders/${orderId}`)
+      .set('Authorization', bearer(buyer))
+      .expect(200);
+    expect((repeated.body as { completedAt: string }).completedAt).toBe(
+      completed.completedAt!.toISOString(),
+    );
+    await api().get('/support/contact').expect(200);
   });
 
   it('recovers an email password only after verification and consumes the code once', async () => {

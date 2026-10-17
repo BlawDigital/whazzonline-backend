@@ -310,6 +310,11 @@ databaseTests('referral database and payment integration', () => {
       authorization_url: 'https://checkout.paystack.com/test-referral',
     };
     const first = await billing.checkout(merchant);
+    const summary = await billing.summary(merchant);
+    expect(summary.payments.length).toBe(summary.paidPayments);
+    expect(
+      summary.payments.every((payment) => payment.paidAt && payment.amount > 0),
+    ).toBe(true);
     const calls = (global.fetch as jest.Mock).mock.calls.length;
     expect(await billing.checkout(merchant)).toEqual(first);
     expect((global.fetch as jest.Mock).mock.calls.length).toBe(calls);

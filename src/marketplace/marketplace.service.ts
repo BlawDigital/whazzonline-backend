@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from 'prisma/prisma.service';
 import { productSku } from '../common/product-sku';
+import { priceOfferProduct } from '../vendors/offer-pricing';
 
 const categories = [
   { id: 'cars', label: 'Cars' },
@@ -29,7 +30,7 @@ function dateListed(createdAt: Date) {
 
 @Injectable()
 export class MarketplaceService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(private readonly prisma: PrismaService) {}
 
   async list() {
     const [products, vendors] = await Promise.all([
@@ -73,6 +74,7 @@ export class MarketplaceService {
           representativeName: true,
           representativeRole: true,
           representativeBio: true,
+          representativePhotoUrl: true,
           user: { select: { registrationType: true, role: true } },
           logoUrl: true,
           state: true,
@@ -103,35 +105,88 @@ export class MarketplaceService {
 
     const sales = products.length
       ? await this.prisma.commerceOrderItem.groupBy({
-        by: ['productId'],
-        where: {
-          productId: { in: products.map((product) => product.id) },
-          order: { status: 'delivered' },
-        },
-        _sum: { quantity: true },
-      })
+          by: ['productId'],
+          where: {
+            productId: { in: products.map((product) => product.id) },
+            order: { status: 'delivered' },
+          },
+          _sum: { quantity: true },
+        })
       : [];
     const salesByProduct = new Map(
       sales.map((sale) => [sale.productId, sale._sum.quantity ?? 0]),
     );
-    const ratings = products.length ? await this.prisma.productReview.groupBy({ by: ['productId'], where: { productId: { in: products.map(product => product.id) } }, _avg: { rating: true }, _count: { _all: true } }) : [];
-    const ratingByProduct = new Map(ratings.map(row => [row.productId, { average: row._avg.rating ?? 0, count: row._count._all }]));
+    const ratings = products.length
+      ? await this.prisma.productReview.groupBy({
+          by: ['productId'],
+          where: { productId: { in: products.map((product) => product.id) } },
+          _avg: { rating: true },
+          _count: { _all: true },
+        })
+      : [];
+    const ratingByProduct = new Map(
+      ratings.map((row) => [
+        row.productId,
+        { average: row._avg.rating ?? 0, count: row._count._all },
+      ]),
+    );
     const now = new Date();
+    const offers = products.length
+      ? await this.prisma.offer.findMany({
+          where: {
+            type: { in: ['PRICE_DISCOUNT', 'FLASH_SALE'] },
+            status: { in: ['ACTIVE', 'SCHEDULED'] },
+            startsAt: { lte: now },
+            endsAt: { gt: now },
+            products: {
+              some: { productId: { in: products.map((p) => p.id) } },
+            },
+          },
+          include: { products: true },
+        })
+      : [];
     return {
       categories,
       products: products.map((product) => {
-        const promoPrice = product.promoPrice;
-        const offerActive = Boolean(
+        let promoPrice = product.promoPrice;
+        let offerEndsAt = product.promoEndsAt;
+        let offerActive = Boolean(
           promoPrice &&
           product.promoStartsAt &&
           product.promoEndsAt &&
           product.promoStartsAt <= now &&
           product.promoEndsAt > now,
         );
+        if (!offerActive) promoPrice = null;
+        for (const offer of offers) {
+          if (
+            !offer.products.some((p) => p.productId === product.id) ||
+            (offer.minimumOrderValue ?? 0) > product.unitPrice ||
+            !offer.discountType ||
+            !offer.discountValue ||
+            (offer.stockLimit !== null &&
+              offer.unitsClaimed >= offer.stockLimit)
+          )
+            continue;
+          const price = priceOfferProduct(
+            product.unitPrice,
+            offer.discountType,
+            offer.discountValue,
+          );
+          if (price > 0 && price < (promoPrice ?? product.unitPrice)) {
+            promoPrice = price;
+            offerEndsAt = offer.endsAt;
+            offerActive = true;
+          }
+        }
         return {
           category: categoryFor(product.category),
           storeCategory: product.category,
-          categoryPath: [product.mainCategory, ...(product.subCategories || []), product.aisle?.name].filter(Boolean),
+          categoryPath: [
+            product.mainCategory,
+            ...(product.subCategories || []),
+            product.aisle?.name,
+          ].filter(Boolean),
           reviewAverage: ratingByProduct.get(product.id)?.average ?? 0,
           reviewCount: ratingByProduct.get(product.id)?.count ?? 0,
           dateListed: dateListed(product.createdAt),
@@ -155,9 +210,7 @@ export class MarketplaceService {
           salePrice: offerActive
             ? `₦${promoPrice?.toLocaleString()}`
             : undefined,
-          offerEndsAt: offerActive
-            ? product.promoEndsAt?.toISOString()
-            : undefined,
+          offerEndsAt: offerActive ? offerEndsAt?.toISOString() : undefined,
           seller: product.vendorProfile.storeName,
           vendorId: product.vendorProfile.userId,
           sku: productSku(product.id),
@@ -181,7 +234,10 @@ export class MarketplaceService {
         representativeName: vendor.representativeName,
         representativeRole: vendor.representativeRole,
         representativeBio: vendor.representativeBio,
-        isBusiness: vendor.user?.registrationType === 'BUSINESS' || vendor.user?.role === 'BUSINESS',
+        representativePhotoUrl: vendor.representativePhotoUrl,
+        isBusiness:
+          vendor.user?.registrationType === 'BUSINESS' ||
+          vendor.user?.role === 'BUSINESS',
         id: vendor.userId,
         location: `${vendor.city}, ${vendor.state}`,
         mapAddress: [vendor.address, vendor.city, vendor.state, 'Nigeria']

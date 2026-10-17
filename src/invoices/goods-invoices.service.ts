@@ -194,6 +194,110 @@ export class GoodsInvoicesService {
       guestAccessToken: guestToken,
     };
   }
+
+  async quote(input: {
+    items: { productId: string; quantity: number }[];
+    deliveryAddress?: string;
+    deliveryFee?: number;
+  }) {
+    const quantities = new Map<string, number>();
+    for (const item of input.items)
+      quantities.set(
+        item.productId,
+        (quantities.get(item.productId) ?? 0) + item.quantity,
+      );
+    const products = await this.prisma.product.findMany({
+      where: {
+        id: { in: [...quantities.keys()] },
+        status: 'ACTIVE',
+        vendorProfile: { setupCompleted: true, user: { isActive: true } },
+      },
+      include: { vendorProfile: { select: { userId: true, storeName: true } } },
+    });
+    if (products.length !== quantities.size)
+      throw new BadRequestException(
+        'A selected product is no longer available.',
+      );
+    const now = new Date();
+    const vendorIds = [
+      ...new Set(products.map((p) => p.vendorProfile.userId)),
+    ].sort();
+    const offers = await this.prisma.offer.findMany({
+      where: {
+        status: { in: ['ACTIVE', 'SCHEDULED'] },
+        startsAt: { lte: now },
+        endsAt: { gt: now },
+        vendorProfile: { userId: { in: vendorIds } },
+        products: { some: { productId: { in: [...quantities.keys()] } } },
+      },
+      include: { products: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    const lines = products.map((p) => {
+      const quantity = quantities.get(p.id)!;
+      if (quantity > p.quantity)
+        throw new BadRequestException(`${p.name} does not have enough stock.`);
+      return {
+        productId: p.id,
+        vendorId: p.vendorProfile.userId,
+        vendorName: p.vendorProfile.storeName,
+        name: p.name,
+        subtitle: p.category,
+        imageUri: p.imageUrls[0] ?? '',
+        sku: p.id,
+        unitPrice: p.unitPrice,
+        quantity,
+        originalPrice: null,
+        selectedColor: null,
+        selectedSize: null,
+        selectedVariants: {},
+        deliveryAddress: input.deliveryAddress ?? '',
+      };
+    });
+    const priced = applyOfferPricing(lines, products, offers, now).lines;
+    const originalSubtotal = lines.reduce(
+      (sum, line) => sum + line.unitPrice * line.quantity,
+      0,
+    );
+    const subtotal = priced.reduce(
+      (sum, line) => sum + line.unitPrice * line.quantity,
+      0,
+    );
+    let deliveryFee = 0;
+    vendorIds.forEach((vendorId, index) => {
+      const vendorLines = priced.filter((line) => line.vendorId === vendorId);
+      const fee =
+        Math.floor((input.deliveryFee ?? 0) / vendorIds.length) +
+        (index < (input.deliveryFee ?? 0) % vendorIds.length ? 1 : 0);
+      deliveryFee += deliveryOfferFee(
+        fee,
+        vendorLines.reduce(
+          (sum, line) => sum + line.unitPrice * line.quantity,
+          0,
+        ),
+        vendorLines.map((line) => line.productId),
+        offers,
+        input.deliveryAddress ?? '',
+        now,
+      );
+    });
+    return {
+      items: priced.map((line) => ({
+        productId: line.productId,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        originalPrice: line.originalPrice,
+        appliedOfferId: line.appliedOfferId,
+      })),
+      originalSubtotal,
+      subtotal,
+      discount: originalSubtotal - subtotal,
+      deliveryFee,
+      serviceFee: 0,
+      total: subtotal + deliveryFee,
+      quotedAt: now.toISOString(),
+    };
+  }
   async createCheckout(input: {
     userId?: string;
     guest?: {
@@ -314,6 +418,7 @@ export class GoodsInvoicesService {
             },
           },
           include: { products: true },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         });
         const { lines: pricedLines, claimed } = applyOfferPricing(
           input.lines,
@@ -634,8 +739,7 @@ export class GoodsInvoicesService {
           conversationId: c.id,
           senderUserId: invoice.vendorId,
           kind: 'TEXT',
-          invoiceId: invoice.id,
-          text: `Invoice ${invoice.number}: ${reason}`,
+          text: `Payment update for invoice ${invoice.number}: ${reason}`,
         },
       });
       await tx.conversation.update({

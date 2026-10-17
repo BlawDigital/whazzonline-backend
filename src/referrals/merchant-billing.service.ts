@@ -98,7 +98,15 @@ export class MerchantBillingService {
       subscriptionId: subscription.id,
       trialStartedAt: subscription.trialStartedAt,
       trialEndsAt: subscription.trialEndsAt,
+      trialActive: subscription.trialEndsAt.getTime() > Date.now(),
       paidPayments: subscription.payments.length,
+      payments: subscription.payments.map((payment) => ({
+        id: payment.id,
+        period: payment.period,
+        amount: payment.amount,
+        paidAt: payment.paidAt,
+        reference: payment.reference,
+      })),
       nextPeriod,
       dueAt: addMonths(subscription.trialEndsAt, nextPeriod - 1),
       canPay:
