@@ -20,7 +20,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly otpService: OtpService,
     private readonly jwtService: JwtService,
-  ) { }
+  ) {}
 
   private generateToken(user: {
     id: string;
@@ -50,7 +50,9 @@ export class AuthService {
     );
     const user = await this.prisma.user.findFirst({
       where: { phone: { in: phoneLookupCandidates(normalizedPhone) } },
-      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
+      include: {
+        vendorProfile: { select: { setupCompleted: true, storeName: true } },
+      },
     });
 
     const publicUser = user ? this.toPublicUser(user) : null;
@@ -122,7 +124,9 @@ export class AuthService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { email: normalizedEmail },
-      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
+      include: {
+        vendorProfile: { select: { setupCompleted: true, storeName: true } },
+      },
     });
     await this.prisma.emailOtp.update({
       where: { id: otpId },
@@ -164,7 +168,9 @@ export class AuthService {
     const user = await this.prisma.user.update({
       where: { id: userId },
       data: { phone: normalizedPhone },
-      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
+      include: {
+        vendorProfile: { select: { setupCompleted: true, storeName: true } },
+      },
     });
     await this.prisma.phoneOtp.updateMany({
       where: {
@@ -178,53 +184,74 @@ export class AuthService {
     return this.toPublicUser(user);
   }
 
-  async requestPasswordReset(email: string) {
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
-    // The public response does not reveal whether the address has an account.
-    if (user) {
-      await this.otpService.sendEmailOtp(
-        normalizedEmail,
-        'PASSWORD_RESET',
-        user.id,
+  private async passwordResetAccount(email?: string, phone?: string) {
+    if (Boolean(email?.trim()) === Boolean(phone?.trim())) {
+      throw new BadRequestException(
+        'Enter either your email address or phone number.',
       );
+    }
+    const contact = phone ? normalizePhone(phone) : email!.trim().toLowerCase();
+    const user = phone
+      ? await this.prisma.user.findFirst({
+          where: { phone: { in: phoneLookupCandidates(contact) } },
+        })
+      : await this.prisma.user.findUnique({ where: { email: contact } });
+    return { contact, user: user?.isActive === false ? null : user };
+  }
+
+  async requestPasswordReset(email?: string, phone?: string) {
+    const { contact, user } = await this.passwordResetAccount(email, phone);
+    if (user) {
+      if (phone) await this.otpService.sendPhoneOtp(contact, 'PASSWORD_RESET');
+      else
+        await this.otpService.sendEmailOtp(contact, 'PASSWORD_RESET', user.id);
     }
     return {
       message:
-        'If this email is linked to an account, a reset code has been sent.',
+        'If these details are linked to an account, a reset code has been sent.',
     };
   }
 
-  async verifyPasswordReset(email: string, code: string) {
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
+  async verifyPasswordReset(
+    email: string | undefined,
+    code: string,
+    phone?: string,
+  ) {
+    const { contact, user } = await this.passwordResetAccount(email, phone);
     if (!user)
-      throw new NotFoundException('No account was found for this email.');
-    await this.otpService.verifyEmailOtp(
-      normalizedEmail,
-      code,
-      'PASSWORD_RESET',
-      user.id,
-    );
+      throw new BadRequestException(
+        'The reset code is invalid or has expired.',
+      );
+    if (phone)
+      await this.otpService.verifyPhoneOtp(contact, code, 'PASSWORD_RESET');
+    else
+      await this.otpService.verifyEmailOtp(
+        contact,
+        code,
+        'PASSWORD_RESET',
+        user.id,
+      );
     return { verified: true };
   }
 
-  async resetPassword(email: string, code: string, password: string) {
-    const normalizedEmail = email.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { email: normalizedEmail },
-    });
+  async resetPassword(
+    email: string | undefined,
+    code: string,
+    password: string,
+    phone?: string,
+  ) {
+    const { contact, user } = await this.passwordResetAccount(email, phone);
     if (!user)
-      throw new NotFoundException('No account was found for this email.');
-    await this.otpService.consumeVerifiedEmailOtp(
-      normalizedEmail,
-      code,
-      'PASSWORD_RESET',
-    );
+      throw new BadRequestException(
+        'The reset code is invalid or has expired.',
+      );
+    if (phone) await this.otpService.consumeVerifiedPhoneReset(contact, code);
+    else
+      await this.otpService.consumeVerifiedEmailOtp(
+        contact,
+        code,
+        'PASSWORD_RESET',
+      );
     await this.prisma.user.update({
       where: { id: user.id },
       data: { passwordHash: await bcrypt.hash(password, 12) },
@@ -240,14 +267,8 @@ export class AuthService {
   // ============================================================
 
   async register(registerDto: RegisterDto) {
-    const {
-      phone,
-      firstName,
-      lastName,
-      email,
-      registrationType,
-      password,
-    } = registerDto;
+    const { phone, firstName, lastName, email, registrationType, password } =
+      registerDto;
 
     const normalizedPhone = phone ? normalizePhone(phone) : undefined;
     const normalizedEmail = email?.trim().toLowerCase();
@@ -312,9 +333,7 @@ export class AuthService {
     // HASH PASSWORD
     // ============================================================
 
-    const passwordHash = password
-      ? await bcrypt.hash(password, 12)
-      : null;
+    const passwordHash = password ? await bcrypt.hash(password, 12) : null;
 
     // ============================================================
     // DETERMINE ROLE
@@ -328,10 +347,22 @@ export class AuthService {
 
     const role = roleByRegistrationType[registrationType];
     const referrer = registerDto.referralCode
-      ? await this.prisma.user.findFirst({ where: { referralCode: registerDto.referralCode, isActive: true, isVerified: true } })
+      ? await this.prisma.user.findFirst({
+          where: {
+            referralCode: registerDto.referralCode,
+            isActive: true,
+            isVerified: true,
+          },
+        })
       : null;
-    if (registerDto.referralCode && !referrer) throw new BadRequestException('This referral link is invalid or no longer active.');
-    if (registerDto.referralCode && registrationType === 'BUYER') throw new BadRequestException('This invitation is for a merchant account. Choose Seller or Business to continue.');
+    if (registerDto.referralCode && !referrer)
+      throw new BadRequestException(
+        'This referral link is invalid or no longer active.',
+      );
+    if (registerDto.referralCode && registrationType === 'BUYER')
+      throw new BadRequestException(
+        'This invitation is for a merchant account. Choose Seller or Business to continue.',
+      );
 
     // ============================================================
     // CREATE ACCOUNT
@@ -346,11 +377,21 @@ export class AuthService {
         passwordHash,
         registrationType,
         role,
-        ...(referrer ? { referredBy: { create: { referrerUserId: referrer.id, refereeName: [firstName, lastName].filter(Boolean).join(' ') || 'New merchant', rewardAmount: 0 } } } : {}),
+        ...(referrer
+          ? {
+              referredBy: {
+                create: {
+                  referrerUserId: referrer.id,
+                  refereeName:
+                    [firstName, lastName].filter(Boolean).join(' ') ||
+                    'New merchant',
+                  rewardAmount: 0,
+                },
+              },
+            }
+          : {}),
 
-        authProvider: normalizedPhone
-          ? 'PHONE'
-          : 'EMAIL',
+        authProvider: normalizedPhone ? 'PHONE' : 'EMAIL',
 
         // TEMPORARY: OTP verification bypassed
         isVerified: true,
@@ -387,17 +428,25 @@ export class AuthService {
 
     const user = normalizedEmail
       ? await this.prisma.user.findUnique({
-        where: {
-          email: normalizedEmail,
-        },
-        include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
-      })
+          where: {
+            email: normalizedEmail,
+          },
+          include: {
+            vendorProfile: {
+              select: { setupCompleted: true, storeName: true },
+            },
+          },
+        })
       : await this.prisma.user.findFirst({
-        where: {
-          phone: { in: phoneLookupCandidates(normalizedPhone!) },
-        },
-        include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
-      });
+          where: {
+            phone: { in: phoneLookupCandidates(normalizedPhone!) },
+          },
+          include: {
+            vendorProfile: {
+              select: { setupCompleted: true, storeName: true },
+            },
+          },
+        });
 
     if (!user) {
       throw new UnauthorizedException('Invalid email/phone or password.');
@@ -425,7 +474,9 @@ export class AuthService {
   async getCurrentUser(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { vendorProfile: { select: { setupCompleted: true, storeName: true } } },
+      include: {
+        vendorProfile: { select: { setupCompleted: true, storeName: true } },
+      },
     });
 
     if (!user) {
@@ -435,7 +486,7 @@ export class AuthService {
     return this.toPublicUser(user);
   }
 
-  async updateProfile(userId: string, updateProfileDto: UpdateProfileDto,) {
+  async updateProfile(userId: string, updateProfileDto: UpdateProfileDto) {
     const user = await this.prisma.user.findUnique({
       where: {
         id: userId,
@@ -443,22 +494,19 @@ export class AuthService {
     });
 
     if (!user) {
-      throw new NotFoundException("User not found.",);
+      throw new NotFoundException('User not found.');
     }
 
-    const {
-      firstName,
-      lastName,
-      dateOfBirth,
-      state,
-      city,
-      interests,
-    } = updateProfileDto;
+    const { firstName, lastName, dateOfBirth, state, city, interests } =
+      updateProfileDto;
 
     let interestIds: string[] | undefined;
     if (interests !== undefined) {
-
-      const uniqueSlugs = [...new Set(interests.map((slug) => slug.trim().toLowerCase()).filter(Boolean),)];
+      const uniqueSlugs = [
+        ...new Set(
+          interests.map((slug) => slug.trim().toLowerCase()).filter(Boolean),
+        ),
+      ];
       const interestRecords = await this.prisma.interest.findMany({
         where: {
           slug: {
@@ -471,7 +519,9 @@ export class AuthService {
         },
       });
       if (interestRecords.length !== uniqueSlugs.length) {
-        throw new BadRequestException("One or more selected interests are invalid.",);
+        throw new BadRequestException(
+          'One or more selected interests are invalid.',
+        );
       }
       interestIds = interestRecords.map((interest) => interest.id);
     }
@@ -515,14 +565,19 @@ export class AuthService {
     });
 
     return {
-      message: "Profile updated successfully.",
+      message: 'Profile updated successfully.',
       user: this.toPublicUser(updatedUser),
     };
   }
 
-
-  private toPublicUser<T extends { passwordHash: unknown; vendorProfile?: { setupCompleted: boolean; storeName?: string } | null; },>(user: T) {
+  private toPublicUser<
+    T extends {
+      passwordHash: unknown;
+      vendorProfile?: { setupCompleted: boolean; storeName?: string } | null;
+    },
+  >(user: T) {
     const { passwordHash: _passwordHash, vendorProfile, ...publicUser } = user;
+    void _passwordHash;
     return {
       ...publicUser,
       vendorSetupCompleted: vendorProfile?.setupCompleted ?? false,

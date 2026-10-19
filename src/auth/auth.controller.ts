@@ -25,7 +25,7 @@ import { UpdateProfileDto } from './dto/update-profile';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) { }
+  constructor(private readonly authService: AuthService) {}
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
@@ -109,29 +109,30 @@ export class AuthController {
 
   @Post('password-reset/request')
   requestPasswordReset(@Body() dto: PasswordResetRequestDto) {
-    return this.authService.requestPasswordReset(dto.email);
+    return this.authService.requestPasswordReset(dto.email, dto.phone);
   }
 
   @Post('password-reset/verify')
   verifyPasswordReset(@Body() dto: PasswordResetVerifyDto) {
-    return this.authService.verifyPasswordReset(dto.email, dto.code);
+    return this.authService.verifyPasswordReset(dto.email, dto.code, dto.phone);
   }
 
   @Post('password-reset/update')
   resetPassword(@Body() dto: PasswordResetUpdateDto) {
-    return this.authService.resetPassword(dto.email, dto.code, dto.password);
+    return this.authService.resetPassword(
+      dto.email,
+      dto.code,
+      dto.password,
+      dto.phone,
+    );
   }
 
-  @Patch("me/profile")
+  @Patch('me/profile')
   @UseGuards(JwtAuthGuard)
   async updateProfile(
     @Req() request: AuthenticatedRequest,
     @Body() dto: UpdateProfileDto,
   ) {
-    return this.authService.updateProfile(
-      request.user.sub,
-      dto,
-    );
+    return this.authService.updateProfile(request.user.sub, dto);
   }
 }
-

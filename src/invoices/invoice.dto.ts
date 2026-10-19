@@ -36,6 +36,16 @@ class InvoiceProductDto {
   @IsUUID() productId!: string;
   @IsInt() @Min(1) @Max(10000) quantity!: number;
 }
+export class CheckoutQuoteDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => InvoiceProductDto)
+  items!: InvoiceProductDto[];
+  @IsOptional() @IsString() @MaxLength(500) deliveryAddress?: string;
+  @IsOptional() @IsInt() @Min(0) @Max(10000000) deliveryFee?: number;
+}
 export class ChatInvoiceDto {
   @IsUUID() requestId!: string;
   @IsArray()

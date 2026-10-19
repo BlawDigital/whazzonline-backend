@@ -22,6 +22,7 @@ import {
 } from './goods-invoices.service';
 import {
   ChatInvoiceDto,
+  CheckoutQuoteDto,
   ConfirmInvoiceDto,
   ConnectMerchantPaymentDto,
   RejectTransferDto,
@@ -33,6 +34,10 @@ export class GoodsInvoicesController {
     private readonly invoices: GoodsInvoicesService,
     private readonly jwt: JwtService,
   ) {}
+  @Post('quote')
+  quote(@Body() dto: CheckoutQuoteDto) {
+    return this.invoices.quote(dto);
+  }
   private async access(request: Request): Promise<InvoiceAccess> {
     const header = request.headers.authorization;
     let userId: string | undefined;

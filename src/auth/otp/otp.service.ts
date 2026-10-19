@@ -19,7 +19,7 @@ export class OtpService {
     @Inject(OTP_PROVIDER) private readonly otpProvider: OtpProvider,
     @Inject(EMAIL_OTP_PROVIDER)
     private readonly emailOtpProvider: EmailOtpProvider,
-  ) { }
+  ) {}
 
   async sendPhoneOtp(phone: string, purpose: PhoneOtpPurpose = 'REGISTRATION') {
     const normalizedPhone = normalizePhone(phone);
@@ -39,10 +39,14 @@ export class OtpService {
     });
 
     if (existingOtp) {
-      throw new BadRequestException('A verification code has already beem sent. Please wait before requesting another.',);
+      throw new BadRequestException(
+        'A verification code has already beem sent. Please wait before requesting another.',
+      );
     }
     const { pinId } = await this.otpProvider.sendOtp(normalizedPhone);
-    const expiresAt = new Date(Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000,);
+    const expiresAt = new Date(
+      Date.now() + this.OTP_EXPIRY_MINUTES * 60 * 1000,
+    );
 
     await this.prisma.phoneOtp.create({
       data: {
@@ -92,7 +96,9 @@ export class OtpService {
       );
     }
     if (!otpRecord.pinId) {
-      throw new BadRequestException('This verification code is invalid. Please request a new code');
+      throw new BadRequestException(
+        'This verification code is invalid. Please request a new code',
+      );
     }
     const isValid = await this.otpProvider.verifyOtp(otpRecord.pinId, code);
 
@@ -116,6 +122,9 @@ export class OtpService {
       },
       data: {
         verified: true,
+        ...(purpose === 'PASSWORD_RESET'
+          ? { codeHash: await bcrypt.hash(code, 10) }
+          : {}),
       },
     });
 
@@ -123,6 +132,47 @@ export class OtpService {
       message: 'Phone number verified successfully.',
       verified: true,
     };
+  }
+
+  async consumeVerifiedPhoneReset(phone: string, code: string) {
+    const record = await this.prisma.phoneOtp.findFirst({
+      where: {
+        phone: normalizePhone(phone),
+        purpose: 'PASSWORD_RESET',
+        verified: true,
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (
+      !record ||
+      record.attempts >= this.MAX_ATTEMPTS ||
+      !record.codeHash ||
+      !(await bcrypt.compare(code, record.codeHash))
+    ) {
+      if (record)
+        await this.prisma.phoneOtp.update({
+          where: { id: record.id },
+          data: { attempts: { increment: 1 } },
+        });
+      throw new BadRequestException(
+        'Verify a valid reset code before updating your password.',
+      );
+    }
+    const consumed = await this.prisma.phoneOtp.updateMany({
+      where: {
+        id: record.id,
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+        attempts: { lt: this.MAX_ATTEMPTS },
+      },
+      data: { consumedAt: new Date() },
+    });
+    if (consumed.count !== 1)
+      throw new BadRequestException(
+        'This reset code has expired or has already been used.',
+      );
   }
 
   async sendEmailOtp(email: string, purpose: EmailOtpPurpose, userId?: string) {
@@ -224,14 +274,32 @@ export class OtpService {
       },
       orderBy: { createdAt: 'desc' },
     });
-    if (!otpRecord || !(await bcrypt.compare(code, otpRecord.codeHash))) {
+    if (
+      !otpRecord ||
+      otpRecord.attempts >= this.MAX_ATTEMPTS ||
+      !(await bcrypt.compare(code, otpRecord.codeHash))
+    ) {
+      if (otpRecord)
+        await this.prisma.emailOtp.update({
+          where: { id: otpRecord.id },
+          data: { attempts: { increment: 1 } },
+        });
       throw new BadRequestException(
         'Verify a valid code before updating your password.',
       );
     }
-    await this.prisma.emailOtp.update({
-      where: { id: otpRecord.id },
+    const consumed = await this.prisma.emailOtp.updateMany({
+      where: {
+        id: otpRecord.id,
+        consumedAt: null,
+        expiresAt: { gt: new Date() },
+        attempts: { lt: this.MAX_ATTEMPTS },
+      },
       data: { consumedAt: new Date() },
     });
+    if (consumed.count !== 1)
+      throw new BadRequestException(
+        'This reset code has expired or has already been used.',
+      );
   }
 }

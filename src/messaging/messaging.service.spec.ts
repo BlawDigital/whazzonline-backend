@@ -10,6 +10,7 @@ describe('MessagingService', () => {
     $transaction: jest.fn(),
     chatMessage: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
     },
     conversation: {
       create: jest.fn(),
@@ -26,6 +27,41 @@ describe('MessagingService', () => {
   const service = new MessagingService(prisma as never);
 
   beforeEach(() => jest.clearAllMocks());
+  it('shows one card per invoice while retaining status updates and removing duplicate legacy announcements', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'thread' });
+    const base = {
+      createdAt: new Date(),
+      conversationId: 'thread',
+      senderUserId: 'vendor',
+      kind: 'TEXT',
+      invoiceId: 'invoice-one',
+      imageUri: null,
+      clientMessageId: null,
+      productContext: null,
+    };
+    prisma.chatMessage.findMany.mockResolvedValue([
+      { ...base, id: 'one', text: 'Invoice INV-1: pay the merchant.' },
+      { ...base, id: 'duplicate', text: 'Invoice INV-1: pay the merchant.' },
+      { ...base, id: 'status', text: 'Invoice INV-1: Payment confirmed.' },
+      {
+        ...base,
+        id: 'two',
+        invoiceId: 'invoice-two',
+        text: 'Invoice INV-2: pay the merchant.',
+      },
+    ]);
+    const result = await service.messages('buyer', 'thread');
+    expect(result.map((message) => message.id)).toEqual([
+      'one',
+      'status',
+      'two',
+    ]);
+    expect(result.filter((message) => message.invoiceId)).toHaveLength(2);
+    expect(result[1]).toMatchObject({
+      text: 'Invoice INV-1: Payment confirmed.',
+      invoiceId: undefined,
+    });
+  });
 
   it('opens one persisted conversation for a real marketplace vendor', async () => {
     prisma.vendorProfile.findFirst.mockResolvedValue({

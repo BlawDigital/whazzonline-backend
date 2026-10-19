@@ -296,6 +296,25 @@ databaseTests('offers with isolated PostgreSQL and authenticated HTTP', () => {
       bundlePrice: 2400,
       durationHours: 24,
     });
+    const quote = await invoices.quote({
+      items: [
+        { productId: s.products[0].id, quantity: 2 },
+        { productId: s.products[1].id, quantity: 1 },
+      ],
+    });
+    expect(quote).toMatchObject({
+      originalSubtotal: 4000,
+      subtotal: 3400,
+      discount: 600,
+      total: 3400,
+    });
+    expect(
+      (
+        await invoices.quote({
+          items: [{ productId: s.products[0].id, quantity: 1 }],
+        })
+      ).total,
+    ).toBe(1000);
     const result = await checkout(s.user.id, [
       { id: s.products[0].id, quantity: 2 },
       { id: s.products[1].id, quantity: 1 },

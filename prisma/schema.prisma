@@ -38,6 +38,7 @@ enum EmailOtpPurpose {
 enum PhoneOtpPurpose {
   PHONE_CHANGE
   REGISTRATION
+  PASSWORD_RESET
 }
 
 model User {
@@ -275,6 +276,7 @@ model VendorProfile {
   representativeName String?
   representativeRole String?
   representativeBio  String?
+  representativePhotoUrl String?
   logoUrl            String?
   bannerUrl          String?
   cacUrl             String?

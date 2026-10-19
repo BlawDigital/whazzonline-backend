@@ -392,6 +392,28 @@ databaseTests('direct merchant invoice integration', () => {
     expect((await invoices.chatInvoice(vendor, thread.id, dto)).id).toBe(
       batch.id,
     );
+    await invoices.report(
+      batch.invoices[0].id,
+      { userId: buyer },
+      { requestId: randomUUID(), reference: 'chat-bank-transfer' },
+    );
+    await Promise.all([
+      invoices.confirm(batch.invoices[0].id, vendor, 'chat-credit'),
+      invoices.confirm(batch.invoices[0].id, vendor, 'chat-credit'),
+    ]);
+    expect(
+      await prisma.chatMessage.count({
+        where: { conversationId: thread.id, invoiceId: batch.invoices[0].id },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.chatMessage.count({
+        where: {
+          conversationId: thread.id,
+          text: { contains: 'Payment confirmed' },
+        },
+      }),
+    ).toBe(1);
   });
   it('rejects platform wallet checkout and unconnected secure checkout', async () => {
     await expect(commerce.verifyPaystackPayment('unknown')).rejects.toThrow(
