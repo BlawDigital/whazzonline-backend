@@ -1,3 +1,4 @@
+import { normalizeSpecifications } from '../common/product-options';
 import { Prisma } from 'generated/prisma/client';
 import {
   legacyProductOffer,
@@ -408,7 +409,8 @@ export class VendorsService {
       const color = normalizeOptionalVariant(variant.color);
       const size = normalizeOptionalVariant(variant.size);
       const type = normalizeOptionalVariant(variant.type);
-      if (!color && !size && !type) {
+      const options = normalizeSpecifications(variant.options ?? {});
+      if (!color && !size && !type && !Object.keys(options).length) {
         throw new BadRequestException(
           'Each product variant needs a color, size, or variant name.',
         );
@@ -419,7 +421,7 @@ export class VendorsService {
           'A variant points to a product image that was not uploaded.',
         );
       }
-      return { color, imageIndexes, quantity: variant.quantity, size, type };
+      return { color, imageIndexes, quantity: variant.quantity, size, type, ...(variant.colorHex ? {colorHex:variant.colorHex} : {}), ...(Object.keys(options).length ? {options} : {}) };
     });
     const variantQuantity = normalizedVariants.reduce(
       (total, variant) => total + variant.quantity,
@@ -439,7 +441,7 @@ export class VendorsService {
         mainCategory: dto.mainCategory,
         name: dto.name,
         quantity: dto.quantity,
-        specifications: dto.specifications,
+        specifications: normalizeSpecifications(dto.specifications),
         subCategories: dto.subCategories,
         unitPrice: dto.unitPrice,
         ...(dto.promoPrice !== undefined
@@ -834,16 +836,19 @@ export class VendorsService {
         'Actual price must be higher than the active promo price.',
       );
     const variants = dto.variants?.map((v) => {
-      if (!v.type?.trim() && !v.color?.trim() && !v.size?.trim())
+      const options = normalizeSpecifications(v.options ?? {});
+      if (!v.type?.trim() && !v.color?.trim() && !v.size?.trim() && !Object.keys(options).length)
         throw new BadRequestException(
           'Each variant needs a name, color, or size.',
         );
       if (v.imageIndexes.some((index) => index >= product.imageUrls.length))
         throw new BadRequestException('Variant image is unavailable.');
       return {
-        type: v.type,
-        color: v.color,
-        size: v.size,
+        type: normalizeOptionalVariant(v.type),
+        color: normalizeOptionalVariant(v.color),
+        size: normalizeOptionalVariant(v.size),
+        ...(v.colorHex ? {colorHex:v.colorHex} : {}),
+        ...(Object.keys(options).length ? {options} : {}),
         quantity: v.quantity,
         imageIndexes: v.imageIndexes,
       };

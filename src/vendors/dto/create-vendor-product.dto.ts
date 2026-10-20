@@ -1,6 +1,7 @@
 import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
   IsArray,
+  Matches,
   ArrayMaxSize,
   IsInt,
   IsIn,
@@ -28,6 +29,15 @@ export class VendorProductVariantDto {
   @IsString()
   @MaxLength(80)
   size?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^#[0-9a-f]{6}$/i)
+  colorHex?: string;
+
+  @IsOptional()
+  @IsObject()
+  options?: Record<string,string>;
 
   @IsOptional()
   @IsArray()
@@ -90,6 +100,7 @@ export class CreateVendorProductDto {
 
   @IsOptional()
   @Transform(({ value }) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
     if (typeof value !== 'string' || value.trim() === '') return {};
     try {
       return JSON.parse(value) as unknown;
@@ -128,5 +139,6 @@ export class CreateVendorProductDto {
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => VendorProductVariantDto)
+  @ArrayMaxSize(100)
   variants: VendorProductVariantDto[] = [];
 }

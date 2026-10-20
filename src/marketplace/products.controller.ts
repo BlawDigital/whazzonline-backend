@@ -198,32 +198,57 @@ export class ProductsController {
     };
   }
 
-  // GET /products/:productId/comments
   @Get(':productId/comments')
-  async getProductComments(
-    @Param('productId') productId: string,
-  ) {
+  async getProductComments(@Param('productId') productId: string, @Query('cursor') cursor?: string) {
     await this.assertActiveProduct(productId);
-
     return this.prisma.productComment.findMany({
-      where: { productId },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      select: {
-        id: true,
-        content: true,
-        createdAt: true,
-        updatedAt: true,
-        user: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            avatarUrl: true,
-          },
-        },
-      },
+      where: { productId, parentId: null }, orderBy: [{ createdAt: 'desc' },{id:'desc'}], take: 50,
+      ...(cursor ? {cursor:{id:cursor},skip:1} : {}),
+      include: { user: {select: {id:true,firstName:true,lastName:true,avatarUrl:true}}, _count:{select:{likes:true,replies:true}} },
     });
+  }
+
+  @Get(':productId/comments/:commentId/replies')
+  async getCommentReplies(@Param('productId') productId:string, @Param('commentId') commentId:string, @Query('cursor') cursor?:string) {
+    await this.assertActiveProduct(productId);
+    return this.prisma.productComment.findMany({
+      where:{productId,parentId:commentId}, orderBy:[{createdAt:'asc'},{id:'asc'}], take:50,
+      ...(cursor ? {cursor:{id:cursor},skip:1} : {}),
+      include:{user:{select:{id:true,firstName:true,lastName:true,avatarUrl:true}},_count:{select:{likes:true,replies:true}}},
+    });
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':productId/comments/liked')
+  async likedComments(@Param('productId') productId:string, @Req() request:AuthenticatedRequest) {
+    const rows=await this.prisma.productCommentLike.findMany({where:{userId:this.getAuthenticatedUserId(request),comment:{productId}},select:{commentId:true}});
+    return rows.map(row=>row.commentId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post(':productId/comments/:commentId/like')
+  async likeComment(@Param('productId') productId:string,@Param('commentId') commentId:string,@Req() request:AuthenticatedRequest) {
+    await this.assertActiveProduct(productId);
+    const comment=await this.prisma.productComment.findFirst({where:{id:commentId,productId}});
+    if(!comment) throw new NotFoundException('Comment not found.');
+    const userId=this.getAuthenticatedUserId(request);
+    await this.prisma.productCommentLike.upsert({where:{commentId_userId:{commentId,userId}},create:{commentId,userId},update:{}});
+    return {liked:true};
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete(':productId/comments/:commentId/like')
+  async unlikeComment(@Param('productId') productId:string,@Param('commentId') commentId:string,@Req() request:AuthenticatedRequest) {
+    await this.prisma.productCommentLike.deleteMany({where:{commentId,userId:this.getAuthenticatedUserId(request),comment:{productId}}});
+    return {liked:false};
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete(':productId/comments/:commentId')
+  async deleteComment(@Param('productId') productId:string,@Param('commentId') commentId:string,@Req() request:AuthenticatedRequest) {
+    const result=await this.prisma.productComment.deleteMany({where:{id:commentId,productId,userId:this.getAuthenticatedUserId(request)}});
+    if(!result.count) throw new NotFoundException('Comment not found.');
+    return {deleted:true};
   }
 
   // POST /products/:productId/comments
@@ -233,6 +258,7 @@ export class ProductsController {
     @Param('productId') productId: string,
     @Body('content') content: unknown,
     @Req() request: AuthenticatedRequest,
+    @Body('parentId') parentId?: unknown,
   ) {
     const userId = this.getAuthenticatedUserId(request);
 
@@ -254,11 +280,20 @@ export class ProductsController {
 
     await this.assertActiveProduct(productId);
 
+    if (parentId !== undefined && (typeof parentId !== 'string' || !parentId)) throw new BadRequestException('Invalid reply.');
+    let threadId: string | undefined;
+    if (typeof parentId === 'string') {
+      const parent = await this.prisma.productComment.findFirst({where:{id:parentId,productId}});
+      if (!parent) throw new NotFoundException('The comment you are replying to was removed.');
+      threadId = parent.parentId ?? parent.id;
+    }
+
     return this.prisma.productComment.create({
       data: {
         productId,
         userId,
         content: trimmedContent,
+        ...(threadId ? {parentId:threadId} : {}),
       },
       select: {
         id: true,
