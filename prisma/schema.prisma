@@ -61,6 +61,7 @@ model User {
   phone String? @unique
 
   productComment ProductComment[]
+  productCommentLikes ProductCommentLike[]
 
   authProvider AuthProvider?
 
@@ -915,7 +916,12 @@ model ProductComment {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   content String
+  parentId String?
+  parent ProductComment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies ProductComment[] @relation("CommentReplies")
+  likes ProductCommentLike[]
 
+  @@index([parentId, createdAt])
   @@index([productId, createdAt])
   @@index([userId, createdAt])
 }
@@ -930,4 +936,14 @@ model ProductReviewVote {
 
   @@unique([userId, reviewId])
   @@index([reviewId])
+}
+
+model ProductCommentLike {
+  commentId String
+  userId String
+  createdAt DateTime @default(now())
+  comment ProductComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([commentId, userId])
+  @@index([userId])
 }

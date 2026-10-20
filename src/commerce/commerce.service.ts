@@ -1,3 +1,4 @@
+import { variantImage } from '../common/product-options';
 import { GoodsInvoicesService } from '../invoices/goods-invoices.service';
 import {
   BadRequestException,
@@ -20,7 +21,8 @@ import { normalizeOrderStatus } from './order-status';
 const DELIVERY_FEE = 0;
 
 function sameVariants(left: unknown, right: unknown) {
-  return JSON.stringify(left ?? {}) === JSON.stringify(right ?? {});
+  const sorted = (value: unknown) => value && typeof value === 'object' ? Object.entries(value).sort(([a],[b])=>a.localeCompare(b)) : [];
+  return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
 }
 
 function activePromoPrice(product: {
@@ -204,7 +206,7 @@ export class CommerceService {
     const unitPrice = promoPrice ?? product.unitPrice;
     const data = {
       deliveryAddress: dto.deliveryAddress,
-      imageUri: product.imageUrls[0] ?? dto.imageUri ?? '',
+      imageUri: variantImage(product, dto.selectedVariants, dto.selectedColor, dto.selectedSize),
       name: product.name,
       originalPrice: promoPrice ? product.unitPrice : null,
       productId: product.id,
@@ -338,7 +340,7 @@ export class CommerceService {
       return {
         sourceCartItemId: cartItem.id,
         deliveryAddress: dto.address.label,
-        imageUri: product.imageUrls[0] ?? cartItem.imageUri ?? '',
+        imageUri: variantImage(product, cartItem.selectedVariants, cartItem.selectedColor, cartItem.selectedSize),
         name: product.name,
         originalPrice: promoPrice ? product.unitPrice : null,
         productId: product.id,
@@ -623,9 +625,8 @@ export class CommerceService {
     );
     if (resumed) return resumed;
     const requestedIds = dto.items.map((item) => item.productId);
-    if (new Set(requestedIds).size !== requestedIds.length) {
-      throw new BadRequestException('A product was submitted more than once');
-    }
+    const selectionKeys=dto.items.map(item=>`${item.productId}:${item.selectedColor ?? ''}:${item.selectedSize ?? ''}:${JSON.stringify(Object.entries(item.selectedVariants ?? {}).sort(([a],[b])=>a.localeCompare(b)))}`);
+    if(new Set(selectionKeys).size !== selectionKeys.length) throw new BadRequestException('A product option was submitted more than once');
     const products = await this.prisma.product.findMany({
       where: { id: { in: requestedIds } },
       include: {
@@ -639,7 +640,7 @@ export class CommerceService {
         },
       },
     });
-    if (products.length !== requestedIds.length) {
+    if (products.length !== new Set(requestedIds).size) {
       throw new BadRequestException(
         'One of the products is no longer available.',
       );
@@ -669,7 +670,7 @@ export class CommerceService {
 
       return {
         deliveryAddress: dto.address.label,
-        imageUri: product.imageUrls[0] ?? '',
+        imageUri: variantImage(product, requested.selectedVariants, requested.selectedColor, requested.selectedSize),
         name: product.name,
         originalPrice: promoPrice ? product.unitPrice : null,
         productId: product.id,

@@ -1,3 +1,4 @@
+import { storedVariants, variantIndex } from '../common/product-options';
 import {
   applyOfferPricing,
   deliveryOfferFee,
@@ -480,6 +481,17 @@ export class GoodsInvoicesService {
             line.productId,
             (quantities.get(line.productId) ?? 0) + line.quantity,
           );
+        for (const product of products) {
+          const variants = storedVariants(product.variants);
+          if (!variants.length) continue;
+          for (const line of pricedLines.filter(l=>l.productId === product.id)) {
+            const index = variantIndex(variants,line.selectedVariants,line.selectedColor,line.selectedSize);
+            if (index < 0) throw new BadRequestException(`Choose an available option for ${product.name}.`);
+            if (variants[index].quantity < line.quantity) throw new BadRequestException(`The selected option for ${product.name} does not have enough stock.`);
+            variants[index] = {...variants[index],quantity:variants[index].quantity-line.quantity};
+          }
+          await tx.product.update({where:{id:product.id},data:{variants:variants as Prisma.InputJsonValue}});
+        }
         for (const [productId, quantity] of [...quantities].sort(([a], [b]) =>
           a.localeCompare(b),
         )) {

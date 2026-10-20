@@ -1,3 +1,4 @@
+import { storedVariants, variantIndex } from '../common/product-options';
 import { BadRequestException } from '@nestjs/common';
 import type { InvoiceLine } from '../invoices/goods-invoices.service';
 import type { Prisma } from 'generated/prisma/client';
@@ -229,8 +230,22 @@ export function deliveryOfferFee(
 }
 export async function releaseOfferUnits(
   tx: Prisma.TransactionClient,
-  items: { appliedOfferId?: string | null; quantity: number }[],
+  items: { appliedOfferId?: string | null; quantity: number; productId?:string; selectedVariants?:unknown; selectedColor?:string|null; selectedSize?:string|null }[],
 ) {
+  const ids=[...new Set(items.map(i=>i.productId).filter((id):id is string=>!!id))];
+  if (ids.length) {
+    const products=await tx.product.findMany({where:{id:{in:ids}}});
+    for (const product of products) {
+      const variants=storedVariants(product.variants);
+      if(!variants.length) continue;
+      let changed=false;
+      for(const item of items.filter(i=>i.productId === product.id)) {
+        const index=variantIndex(variants,item.selectedVariants,item.selectedColor,item.selectedSize);
+        if(index>=0){variants[index]={...variants[index],quantity:variants[index].quantity+item.quantity};changed=true;}
+      }
+      if(changed) await tx.product.update({where:{id:product.id},data:{variants:variants as Prisma.InputJsonValue}});
+    }
+  }
   const units = new Map<string, number>();
   for (const item of items)
     if (item.appliedOfferId)

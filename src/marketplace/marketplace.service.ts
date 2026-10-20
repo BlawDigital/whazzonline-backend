@@ -192,6 +192,7 @@ export class MarketplaceService {
           dateListed: dateListed(product.createdAt),
           id: product.id,
           likeCount: product._count.likes,
+          quantity: product.quantity,
           commentCount: product._count.comments,
           salesCount: salesByProduct.get(product.id) ?? 0,
           imageUri: product.imageUrls[0] ?? '',
