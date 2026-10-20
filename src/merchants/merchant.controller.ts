@@ -151,6 +151,7 @@ export class MerchantController {
 @Controller('merchants')
 export class MerchantPublicController {
   constructor(private readonly service: MerchantService) {}
+  @Get('offers/discover') discoverOffers() { return this.service.offers(null, true); }
   @Get('stories') stories(@Query() query: FeedDto) {
     return this.service.feed(undefined, {
       ...query,

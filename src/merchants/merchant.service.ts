@@ -278,7 +278,7 @@ export class MerchantService {
       .catch(() => undefined);
     return { deleted: true };
   }
-  async offers(userId: string, explore = false) {
+  async offers(userId: string | null, explore = false) {
     const now = new Date();
     const offers = await this.prisma.offer.findMany({
       where: {
@@ -289,8 +289,8 @@ export class MerchantService {
           setupCompleted: true,
           user: { isActive: true },
           ...(explore
-            ? { userId: { not: userId } }
-            : { contacts: { some: { userId } } }),
+            ? (userId ? { userId: { not: userId } } : {})
+            : { contacts: { some: { userId: userId! } } }),
         },
       },
       include: {
@@ -333,8 +333,8 @@ export class MerchantService {
           setupCompleted: true,
           user: { isActive: true },
           ...(explore
-            ? { userId: { not: userId } }
-            : { contacts: { some: { userId } } }),
+            ? (userId ? { userId: { not: userId } } : {})
+            : { contacts: { some: { userId: userId! } } }),
         },
       },
       select: {
