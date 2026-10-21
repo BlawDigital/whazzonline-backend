@@ -8,6 +8,7 @@ import { AppModule } from '../app.module';
 import { PrismaService } from '../../prisma/prisma.service';
 
 jest.mock('./merchant-media', () => ({
+  uploadStoryMusic: jest.fn().mockResolvedValue({url:'https://example.test/story.mp3',publicId:'story-music'}),
   uploadMerchantMedia: jest
     .fn()
     .mockResolvedValue({
@@ -24,7 +25,7 @@ jest.mock('../storage/cloudinary-storage', () => ({
   }),
 }));
 const isolated =
-  /^postgresql:\/\/[^@]+@localhost:5433\/seller_web_verification(?:\?|$)/.test(
+  /^postgresql:\/\/[^@]+@localhost:5433\/seller_web_verification(?:_notifications)?(?:\?|$)/.test(
     process.env.DATABASE_URL ?? '',
   );
 (isolated ? describe : describe.skip)(
@@ -98,6 +99,7 @@ const isolated =
         .field('kind', 'STORY')
         .field('title', 'New In')
         .field('topic', 'NEW_IN')
+        .attach('music', Buffer.from('ID3test audio'), { filename:'story.mp3',contentType:'audio/mpeg' })
         .attach('media', Buffer.from('test image'), {
           filename: 'story.png',
           contentType: 'image/png',
@@ -106,7 +108,7 @@ const isolated =
       storyId = (created.body as { id: string }).id;
       expect(
         await db.merchantContent.findUnique({ where: { id: storyId } }),
-      ).toMatchObject({ title: 'New In', kind: 'STORY' });
+      ).toMatchObject({ title: 'New In', kind: 'STORY', musicUrl:'https://example.test/story.mp3' });
       for (const token of [buyerToken, sellerToken]) {
         const feed = await request(app.getHttpServer())
           .get(`/merchants/feed?kind=STORY&merchantId=${seller}`)
@@ -144,6 +146,9 @@ const isolated =
             merchantStoreName: 'Story verification store',
           });
         });
+      await db.merchantContent.update({where:{id:storyId},data:{createdAt:new Date(Date.now()-86400001)}});
+      const expired=await request(app.getHttpServer()).get(`/merchants/stories?merchantId=${seller}`).expect(200);
+      expect((expired.body as {items:unknown[]}).items).toHaveLength(0);
       await request(app.getHttpServer())
         .delete(`/merchants/content/${storyId}`)
         .auth(outsiderToken, { type: 'bearer' })

@@ -18,6 +18,7 @@ import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import {
+  NotificationsQuery,
   AisleDto,
   AssignAisleDto,
   ContentDto,
@@ -56,11 +57,14 @@ export class MerchantController {
   @Get('offers/explore') exploreOffers(@Req() req: AuthenticatedRequest) {
     return this.service.offers(req.user.sub, true);
   }
-  @Get('notifications') notifications(@Req() req: AuthenticatedRequest) {
-    return this.service.notifications(req.user.sub);
+  @Get('notifications') notifications(@Req() req: AuthenticatedRequest, @Query() query: NotificationsQuery) {
+    return this.service.notifications(req.user.sub, query);
   }
   @Post('notifications/read-all') readAll(@Req() req: AuthenticatedRequest) {
     return this.service.readNotifications(req.user.sub);
+  }
+  @Post('notifications/:id/read') readOne(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.service.readNotifications(req.user.sub, id);
   }
   @Post('content')
   @UseInterceptors(

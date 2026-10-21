@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import {
+  NotificationsQuery,
   AisleDto,
   ContentDto,
   FeedDto,
@@ -399,8 +400,8 @@ export class MerchantService {
       })),
     ];
   }
-  async notifications(userId: string) {
-    const [orders, posts, reads, supportReplies] = await Promise.all([
+  async notifications(userId: string, query?: NotificationsQuery) {
+    const [orders, posts, reads, supportReplies, offers, promotions, inventory] = await Promise.all([
       this.prisma.commerceOrder.findMany({
         where: { OR: [{ userId }, { items: { some: { vendorId: userId } } }] },
         select: orderNotificationSelect,
@@ -420,6 +421,7 @@ export class MerchantService {
           id: true,
           title: true,
           kind: true,
+          topic: true,
           createdAt: true,
           merchant: { select: { storeName: true, userId: true } },
         },
@@ -439,13 +441,27 @@ export class MerchantService {
         orderBy: { createdAt: 'desc' },
         take: 100,
       }),
+      this.prisma.offer.findMany({
+        where: { status: { in: ['ACTIVE', 'SCHEDULED'] }, startsAt: { lte: new Date() }, endsAt: { gt: new Date() }, vendorProfile: { setupCompleted: true, user: { isActive: true }, OR: [{ userId }, { contacts: { some: { userId } } }] } },
+        select: { id: true, name: true, description: true, startsAt: true, vendorProfile: { select: { userId: true, storeName: true } } }, orderBy: { startsAt: 'desc' }, take: 100,
+      }),
+      this.prisma.product.findMany({
+        where: { ...legacyPromotionWhere(new Date()), vendorProfile: { setupCompleted: true, user: { isActive: true }, OR: [{ userId }, { contacts: { some: { userId } } }] } },
+        select: { id: true, name: true, promoStartsAt: true, vendorProfile: { select: { userId: true, storeName: true } } }, orderBy: { promoStartsAt: 'desc' }, take: 100,
+      }),
+      this.prisma.product.findMany({
+        where: { status: 'ACTIVE', quantity: { lte: 5 }, vendorProfile: { userId } },
+        select: { id: true, name: true, quantity: true, updatedAt: true }, orderBy: { updatedAt: 'desc' }, take: 100,
+      }),
     ]);
     const keys = new Set(reads.map((row) => row.key));
     const notices = [
-      ...orders.flatMap((order) => orderNotices(order, userId)),
-      ...supportReplies.map(supportReplyNotice),
+      ...orders.flatMap((order) => orderNotices(order, userId)).map(n => ({ ...n, category: "orders" })),
+      ...supportReplies.map(supportReplyNotice).map(n => ({ ...n, category: n.orderId ? "orders" : "system" })),
       ...posts.map((post) => ({
         id: `merchant-content:${post.id}`,
+        category: post.topic === 'OFFER' ? 'promotions' : 'system',
+        type: post.kind.toLowerCase(),
         title: `${post.merchant.storeName} · ${post.kind === 'STORY' ? 'Story' : 'SCROLL'}`,
         body: post.title,
         createdAt: post.createdAt.toISOString(),
@@ -453,22 +469,31 @@ export class MerchantService {
         merchantId: post.merchant.userId,
         read: false,
       })),
+      ...offers.map(offer => ({ id: `offer:${offer.id}`, category: 'offers', type: 'offer', title: `${offer.vendorProfile.storeName} · New offer`, body: offer.name || offer.description || 'An offer is available. View the offer for details.', createdAt: offer.startsAt.toISOString(), merchantId: offer.vendorProfile.userId, offerId: offer.id, read: false })),
+      ...promotions.map(product => ({ id: `promotion:${product.id}:${product.promoStartsAt!.getTime()}`, category: 'promotions', type: 'promotion', title: `${product.vendorProfile.storeName} · Promotion`, body: `${product.name} is on promotion.`, createdAt: product.promoStartsAt!.toISOString(), merchantId: product.vendorProfile.userId, productId: product.id, read: false })),
+      ...inventory.map(product => ({ id: `inventory:${product.id}:${product.updatedAt.getTime()}`, category: 'system', type: 'inventory', title: 'Inventory alert', body: `${product.name} has ${product.quantity} ${product.quantity === 1 ? 'unit' : 'units'} left in stock.`, createdAt: product.updatedAt.toISOString(), merchantId: userId, productId: product.id, read: false })),
     ]
       .map((notice) => ({
         ...notice,
         read: notice.read || keys.has(notice.id),
       }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    const filtered = notices.filter(n => !query?.category || query.category === 'all' || n.category === query.category);
+    const offset = query?.offset || 0;
+    const limit = query?.limit ?? filtered.length;
     return {
-      notifications: notices,
+      notifications: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      hasMore: offset + limit < filtered.length,
       unreadCount: notices.filter((notice) => !notice.read).length,
     };
   }
-  async readNotifications(userId: string) {
+  async readNotifications(userId: string, id?: string) {
     const feed = await this.notifications(userId);
+    if (id && !feed.notifications.some(n => n.id === id)) throw new NotFoundException('Notification not found in your account.');
     await this.prisma.sellerNotificationRead.createMany({
       data: feed.notifications
-        .filter((row) => !row.read)
+        .filter((row) => !row.read && (!id || row.id === id))
         .map((row) => ({ userId, key: row.id })),
       skipDuplicates: true,
     });
