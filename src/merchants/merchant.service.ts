@@ -155,17 +155,36 @@ export class MerchantService {
           })
         : [];
     const rows = [...first, ...rest];
-    const storyCounts = query.kind === 'STORY' && rows.length ? await this.prisma.merchantContent.groupBy({
-      by: ['merchantId'], where: { ...where, kind: 'STORY', merchantId: { in: [...new Set(rows.map(row => row.merchantId))] } }, _count: { _all: true },
-    }) : [];
-    const counts = new Map(storyCounts.map(row => [row.merchantId, row._count._all]));
+    const storyCounts =
+      query.kind === 'STORY' && rows.length
+        ? await this.prisma.merchantContent.groupBy({
+            by: ['merchantId'],
+            where: {
+              ...where,
+              kind: 'STORY',
+              merchantId: {
+                in: [...new Set(rows.map((row) => row.merchantId))],
+              },
+            },
+            _count: { _all: true },
+          })
+        : [];
+    const counts = new Map(
+      storyCounts.map((row) => [row.merchantId, row._count._all]),
+    );
     return {
       items: rows.map(({ mediaPublicId, musicPublicId, ...row }) => {
         // The storage identifier is for owner-side cleanup only.
-        void mediaPublicId; void musicPublicId;
+        void mediaPublicId;
+        void musicPublicId;
         return {
           ...row,
-          expiresAt: row.kind === 'STORY' ? new Date(row.createdAt.getTime() + 24 * 60 * 60 * 1000).toISOString() : null,
+          expiresAt:
+            row.kind === 'STORY'
+              ? new Date(
+                  row.createdAt.getTime() + 24 * 60 * 60 * 1000,
+                ).toISOString()
+              : null,
           activeStoryCount: counts.get(row.merchantId),
           saved: saved.includes(row.merchantId),
           trusted: trusted.includes(row.merchantId),
@@ -194,7 +213,8 @@ export class MerchantService {
       throw new BadRequestException('SCROLL requires a video.');
     if (!dto.title.trim() || (dto.caption && !dto.caption.trim()))
       throw new BadRequestException('Content cannot contain only spaces.');
-    if (musicFile && dto.kind !== 'STORY') throw new BadRequestException('Music can only be added to Stories.');
+    if (musicFile && dto.kind !== 'STORY')
+      throw new BadRequestException('Music can only be added to Stories.');
     const media = await uploadMerchantMedia(file);
     let music: Awaited<ReturnType<typeof uploadStoryMusic>> | undefined;
     try {
@@ -209,11 +229,16 @@ export class MerchantService {
           mediaUrl: media.mediaUrl,
           mediaType: media.mediaType,
           mediaPublicId: media.publicId,
-          ...(music ? { musicUrl: music.url, musicPublicId: music.publicId } : {}),
+          ...(music
+            ? { musicUrl: music.url, musicPublicId: music.publicId }
+            : {}),
         },
       });
     } catch (error) {
-      if (music) await cloudinaryClient().uploader.destroy(music.publicId, { resource_type: 'video' }).catch(() => undefined);
+      if (music)
+        await cloudinaryClient()
+          .uploader.destroy(music.publicId, { resource_type: 'video' })
+          .catch(() => undefined);
       await cloudinaryClient()
         .uploader.destroy(media.publicId, { resource_type: media.resourceType })
         .catch(() => undefined);
@@ -245,7 +270,8 @@ export class MerchantService {
       !file.mimetype.startsWith('video/')
     )
       throw new BadRequestException('SCROLL requires a video.');
-    if (musicFile && content.kind !== 'STORY') throw new BadRequestException('Music can only be added to Stories.');
+    if (musicFile && content.kind !== 'STORY')
+      throw new BadRequestException('Music can only be added to Stories.');
     const media = file ? await uploadMerchantMedia(file) : undefined;
     let music: Awaited<ReturnType<typeof uploadStoryMusic>> | undefined;
     try {
@@ -253,7 +279,11 @@ export class MerchantService {
       const updated = await this.prisma.merchantContent.update({
         where: { id },
         data: {
-          ...(music ? { musicUrl: music.url, musicPublicId: music.publicId } : dto.removeMusic === 'true' ? { musicUrl: null, musicPublicId: null } : {}),
+          ...(music
+            ? { musicUrl: music.url, musicPublicId: music.publicId }
+            : dto.removeMusic === 'true'
+              ? { musicUrl: null, musicPublicId: null }
+              : {}),
           ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
           ...(dto.caption !== undefined ? { caption: dto.caption.trim() } : {}),
           ...(dto.topic !== undefined ? { topic: dto.topic } : {}),
@@ -272,10 +302,16 @@ export class MerchantService {
             resource_type: content.mediaType === 'VIDEO' ? 'video' : 'image',
           })
           .catch(() => undefined);
-      if ((music || dto.removeMusic === 'true') && content.musicPublicId) await cloudinaryClient().uploader.destroy(content.musicPublicId, { resource_type: 'video' }).catch(() => undefined);
+      if ((music || dto.removeMusic === 'true') && content.musicPublicId)
+        await cloudinaryClient()
+          .uploader.destroy(content.musicPublicId, { resource_type: 'video' })
+          .catch(() => undefined);
       return updated;
     } catch (error) {
-      if (music) await cloudinaryClient().uploader.destroy(music.publicId, { resource_type: 'video' }).catch(() => undefined);
+      if (music)
+        await cloudinaryClient()
+          .uploader.destroy(music.publicId, { resource_type: 'video' })
+          .catch(() => undefined);
       if (media)
         await cloudinaryClient()
           .uploader.destroy(media.publicId, {
@@ -299,7 +335,10 @@ export class MerchantService {
         resource_type: content.mediaType === 'VIDEO' ? 'video' : 'image',
       })
       .catch(() => undefined);
-    if (content.musicPublicId) await cloudinaryClient().uploader.destroy(content.musicPublicId, { resource_type: 'video' }).catch(() => undefined);
+    if (content.musicPublicId)
+      await cloudinaryClient()
+        .uploader.destroy(content.musicPublicId, { resource_type: 'video' })
+        .catch(() => undefined);
     return { deleted: true };
   }
   async offers(userId: string | null, explore = false) {
@@ -313,7 +352,9 @@ export class MerchantService {
           setupCompleted: true,
           user: { isActive: true },
           ...(explore
-            ? (userId ? { userId: { not: userId } } : {})
+            ? userId
+              ? { userId: { not: userId } }
+              : {}
             : { contacts: { some: { userId: userId! } } }),
         },
       },
@@ -357,7 +398,9 @@ export class MerchantService {
           setupCompleted: true,
           user: { isActive: true },
           ...(explore
-            ? (userId ? { userId: { not: userId } } : {})
+            ? userId
+              ? { userId: { not: userId } }
+              : {}
             : { contacts: { some: { userId: userId! } } }),
         },
       },
@@ -401,7 +444,15 @@ export class MerchantService {
     ];
   }
   async notifications(userId: string, query?: NotificationsQuery) {
-    const [orders, posts, reads, supportReplies, offers, promotions, inventory] = await Promise.all([
+    const [
+      orders,
+      posts,
+      reads,
+      supportReplies,
+      offers,
+      promotions,
+      inventory,
+    ] = await Promise.all([
       this.prisma.commerceOrder.findMany({
         where: { OR: [{ userId }, { items: { some: { vendorId: userId } } }] },
         select: orderNotificationSelect,
@@ -410,7 +461,10 @@ export class MerchantService {
       }),
       this.prisma.merchantContent.findMany({
         where: {
-          OR: [{ kind: { not: 'STORY' } }, { createdAt: { gt: new Date(Date.now() - 86400000) } }],
+          OR: [
+            { kind: { not: 'STORY' } },
+            { createdAt: { gt: new Date(Date.now() - 86400000) } },
+          ],
           merchant: {
             contacts: { some: { userId } },
             setupCompleted: true,
@@ -442,22 +496,63 @@ export class MerchantService {
         take: 100,
       }),
       this.prisma.offer.findMany({
-        where: { status: { in: ['ACTIVE', 'SCHEDULED'] }, startsAt: { lte: new Date() }, endsAt: { gt: new Date() }, vendorProfile: { setupCompleted: true, user: { isActive: true }, OR: [{ userId }, { contacts: { some: { userId } } }] } },
-        select: { id: true, name: true, description: true, startsAt: true, vendorProfile: { select: { userId: true, storeName: true } } }, orderBy: { startsAt: 'desc' }, take: 100,
+        where: {
+          status: { in: ['ACTIVE', 'SCHEDULED'] },
+          startsAt: { lte: new Date() },
+          endsAt: { gt: new Date() },
+          vendorProfile: {
+            setupCompleted: true,
+            user: { isActive: true },
+            OR: [{ userId }, { contacts: { some: { userId } } }],
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          startsAt: true,
+          vendorProfile: { select: { userId: true, storeName: true } },
+        },
+        orderBy: { startsAt: 'desc' },
+        take: 100,
       }),
       this.prisma.product.findMany({
-        where: { ...legacyPromotionWhere(new Date()), vendorProfile: { setupCompleted: true, user: { isActive: true }, OR: [{ userId }, { contacts: { some: { userId } } }] } },
-        select: { id: true, name: true, promoStartsAt: true, vendorProfile: { select: { userId: true, storeName: true } } }, orderBy: { promoStartsAt: 'desc' }, take: 100,
+        where: {
+          ...legacyPromotionWhere(new Date()),
+          vendorProfile: {
+            setupCompleted: true,
+            user: { isActive: true },
+            OR: [{ userId }, { contacts: { some: { userId } } }],
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          promoStartsAt: true,
+          vendorProfile: { select: { userId: true, storeName: true } },
+        },
+        orderBy: { promoStartsAt: 'desc' },
+        take: 100,
       }),
       this.prisma.product.findMany({
-        where: { status: 'ACTIVE', quantity: { lte: 5 }, vendorProfile: { userId } },
-        select: { id: true, name: true, quantity: true, updatedAt: true }, orderBy: { updatedAt: 'desc' }, take: 100,
+        where: {
+          status: 'ACTIVE',
+          quantity: { lte: 5 },
+          vendorProfile: { userId },
+        },
+        select: { id: true, name: true, quantity: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+        take: 100,
       }),
     ]);
     const keys = new Set(reads.map((row) => row.key));
     const notices = [
-      ...orders.flatMap((order) => orderNotices(order, userId)).map(n => ({ ...n, category: "orders" })),
-      ...supportReplies.map(supportReplyNotice).map(n => ({ ...n, category: n.orderId ? "orders" : "system" })),
+      ...orders
+        .flatMap((order) => orderNotices(order, userId))
+        .map((n) => ({ ...n, category: 'orders' })),
+      ...supportReplies
+        .map(supportReplyNotice)
+        .map((n) => ({ ...n, category: n.orderId ? 'orders' : 'system' })),
       ...posts.map((post) => ({
         id: `merchant-content:${post.id}`,
         category: post.topic === 'OFFER' ? 'promotions' : 'system',
@@ -469,16 +564,54 @@ export class MerchantService {
         merchantId: post.merchant.userId,
         read: false,
       })),
-      ...offers.map(offer => ({ id: `offer:${offer.id}`, category: 'offers', type: 'offer', title: `${offer.vendorProfile.storeName} · New offer`, body: offer.name || offer.description || 'An offer is available. View the offer for details.', createdAt: offer.startsAt.toISOString(), merchantId: offer.vendorProfile.userId, offerId: offer.id, read: false })),
-      ...promotions.map(product => ({ id: `promotion:${product.id}:${product.promoStartsAt!.getTime()}`, category: 'promotions', type: 'promotion', title: `${product.vendorProfile.storeName} · Promotion`, body: `${product.name} is on promotion.`, createdAt: product.promoStartsAt!.toISOString(), merchantId: product.vendorProfile.userId, productId: product.id, read: false })),
-      ...inventory.map(product => ({ id: `inventory:${product.id}:${product.updatedAt.getTime()}`, category: 'system', type: 'inventory', title: 'Inventory alert', body: `${product.name} has ${product.quantity} ${product.quantity === 1 ? 'unit' : 'units'} left in stock.`, createdAt: product.updatedAt.toISOString(), merchantId: userId, productId: product.id, read: false })),
+      ...offers.map((offer) => ({
+        id: `offer:${offer.id}`,
+        category: 'offers',
+        type: 'offer',
+        title: `${offer.vendorProfile.storeName} · New offer`,
+        body:
+          offer.name ||
+          offer.description ||
+          'An offer is available. View the offer for details.',
+        createdAt: offer.startsAt.toISOString(),
+        merchantId: offer.vendorProfile.userId,
+        offerId: offer.id,
+        read: false,
+      })),
+      ...promotions.map((product) => ({
+        id: `promotion:${product.id}:${product.promoStartsAt!.getTime()}`,
+        category: 'promotions',
+        type: 'promotion',
+        title: `${product.vendorProfile.storeName} · Promotion`,
+        body: `${product.name} is on promotion.`,
+        createdAt: product.promoStartsAt!.toISOString(),
+        merchantId: product.vendorProfile.userId,
+        productId: product.id,
+        read: false,
+      })),
+      ...inventory.map((product) => ({
+        id: `inventory:${product.id}:${product.updatedAt.getTime()}`,
+        category: 'system',
+        type: 'inventory',
+        title: 'Inventory alert',
+        body: `${product.name} has ${product.quantity} ${product.quantity === 1 ? 'unit' : 'units'} left in stock.`,
+        createdAt: product.updatedAt.toISOString(),
+        merchantId: userId,
+        productId: product.id,
+        read: false,
+      })),
     ]
       .map((notice) => ({
         ...notice,
         read: notice.read || keys.has(notice.id),
       }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-    const filtered = notices.filter(n => !query?.category || query.category === 'all' || n.category === query.category);
+    const filtered = notices.filter(
+      (n) =>
+        !query?.category ||
+        query.category === 'all' ||
+        n.category === query.category,
+    );
     const offset = query?.offset || 0;
     const limit = query?.limit ?? filtered.length;
     return {
@@ -490,7 +623,8 @@ export class MerchantService {
   }
   async readNotifications(userId: string, id?: string) {
     const feed = await this.notifications(userId);
-    if (id && !feed.notifications.some(n => n.id === id)) throw new NotFoundException('Notification not found in your account.');
+    if (id && !feed.notifications.some((n) => n.id === id))
+      throw new NotFoundException('Notification not found in your account.');
     await this.prisma.sellerNotificationRead.createMany({
       data: feed.notifications
         .filter((row) => !row.read && (!id || row.id === id))

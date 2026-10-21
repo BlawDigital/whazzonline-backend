@@ -54,12 +54,42 @@ export async function uploadMerchantMedia(file: Express.Multer.File) {
 
 export async function uploadStoryMusic(file: Express.Multer.File) {
   const b = file.buffer;
-  const valid = (file.mimetype === 'audio/mpeg' && (b.toString('ascii', 0, 3) === 'ID3' || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0))) || (['audio/mp4', 'audio/x-m4a'].includes(file.mimetype) && b.toString('ascii', 4, 8) === 'ftyp') || (['audio/wav', 'audio/x-wav'].includes(file.mimetype) && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WAVE') || (file.mimetype === 'audio/ogg' && b.toString('ascii', 0, 4) === 'OggS');
-  if (!valid || b.length > 10 * 1024 * 1024) throw new BadRequestException('Choose an MP3, M4A, WAV or OGG file smaller than 10 MB.');
+  const valid =
+    (file.mimetype === 'audio/mpeg' &&
+      (b.toString('ascii', 0, 3) === 'ID3' ||
+        (b[0] === 0xff && (b[1] & 0xe0) === 0xe0))) ||
+    (['audio/mp4', 'audio/x-m4a'].includes(file.mimetype) &&
+      b.toString('ascii', 4, 8) === 'ftyp') ||
+    (['audio/wav', 'audio/x-wav'].includes(file.mimetype) &&
+      b.toString('ascii', 0, 4) === 'RIFF' &&
+      b.toString('ascii', 8, 12) === 'WAVE') ||
+    (file.mimetype === 'audio/ogg' && b.toString('ascii', 0, 4) === 'OggS');
+  if (!valid || b.length > 10 * 1024 * 1024)
+    throw new BadRequestException(
+      'Choose an MP3, M4A, WAV or OGG file smaller than 10 MB.',
+    );
   const publicId = `whazzonline/story-music/${randomUUID()}`;
-  const result = await new Promise<{ secure_url: string }>((resolve, reject) => {
-    const stream = cloudinaryClient().uploader.upload_stream({ resource_type: 'video', public_id: publicId, overwrite: false, timeout: 60000 }, (error, value) => error || !value ? reject(new BadGatewayException('Music upload failed. Please retry.')) : resolve(value));
-    stream.on('error', () => reject(new BadGatewayException('Music upload failed.'))); stream.end(b);
-  });
+  const result = await new Promise<{ secure_url: string }>(
+    (resolve, reject) => {
+      const stream = cloudinaryClient().uploader.upload_stream(
+        {
+          resource_type: 'video',
+          public_id: publicId,
+          overwrite: false,
+          timeout: 60000,
+        },
+        (error, value) =>
+          error || !value
+            ? reject(
+                new BadGatewayException('Music upload failed. Please retry.'),
+              )
+            : resolve(value),
+      );
+      stream.on('error', () =>
+        reject(new BadGatewayException('Music upload failed.')),
+      );
+      stream.end(b);
+    },
+  );
   return { url: result.secure_url, publicId };
 }

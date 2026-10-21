@@ -73,7 +73,9 @@ export class ProductReviewsQuery {
 }
 
 export class NotificationsQuery {
-  @IsOptional() @IsIn(['all', 'orders', 'offers', 'promotions', 'system']) category?: string;
+  @IsOptional()
+  @IsIn(['all', 'orders', 'offers', 'promotions', 'system'])
+  category?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset = 0;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }

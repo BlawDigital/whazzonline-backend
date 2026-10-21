@@ -14,7 +14,10 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import {
@@ -57,37 +60,68 @@ export class MerchantController {
   @Get('offers/explore') exploreOffers(@Req() req: AuthenticatedRequest) {
     return this.service.offers(req.user.sub, true);
   }
-  @Get('notifications') notifications(@Req() req: AuthenticatedRequest, @Query() query: NotificationsQuery) {
+  @Get('notifications') notifications(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: NotificationsQuery,
+  ) {
     return this.service.notifications(req.user.sub, query);
   }
   @Post('notifications/read-all') readAll(@Req() req: AuthenticatedRequest) {
     return this.service.readNotifications(req.user.sub);
   }
-  @Post('notifications/:id/read') readOne(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+  @Post('notifications/:id/read') readOne(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
     return this.service.readNotifications(req.user.sub, id);
   }
   @Post('content')
   @UseInterceptors(
-    FileFieldsInterceptor([{ name: 'media', maxCount: 1 }, { name: 'music', maxCount: 1 }], { limits: { fileSize: 50 * 1024 * 1024, files: 2 } }),
+    FileFieldsInterceptor(
+      [
+        { name: 'media', maxCount: 1 },
+        { name: 'music', maxCount: 1 },
+      ],
+      { limits: { fileSize: 50 * 1024 * 1024, files: 2 } },
+    ),
   )
   create(
     @Req() req: AuthenticatedRequest,
     @Body() dto: ContentDto,
-    @UploadedFiles() files?: { media?: Express.Multer.File[]; music?: Express.Multer.File[] },
+    @UploadedFiles()
+    files?: { media?: Express.Multer.File[]; music?: Express.Multer.File[] },
   ) {
-    return this.service.createContent(req.user.sub, dto, files?.media?.[0], files?.music?.[0]);
+    return this.service.createContent(
+      req.user.sub,
+      dto,
+      files?.media?.[0],
+      files?.music?.[0],
+    );
   }
   @Patch('content/:id')
   @UseInterceptors(
-    FileFieldsInterceptor([{ name: 'media', maxCount: 1 }, { name: 'music', maxCount: 1 }], { limits: { fileSize: 50 * 1024 * 1024, files: 2 } }),
+    FileFieldsInterceptor(
+      [
+        { name: 'media', maxCount: 1 },
+        { name: 'music', maxCount: 1 },
+      ],
+      { limits: { fileSize: 50 * 1024 * 1024, files: 2 } },
+    ),
   )
   update(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: UpdateContentDto,
-    @UploadedFiles() files?: { media?: Express.Multer.File[]; music?: Express.Multer.File[] },
+    @UploadedFiles()
+    files?: { media?: Express.Multer.File[]; music?: Express.Multer.File[] },
   ) {
-    return this.service.updateContent(req.user.sub, id, dto, files?.media?.[0], files?.music?.[0]);
+    return this.service.updateContent(
+      req.user.sub,
+      id,
+      dto,
+      files?.media?.[0],
+      files?.music?.[0],
+    );
   }
   @Delete('content/:id') remove(
     @Req() req: AuthenticatedRequest,
@@ -152,7 +186,9 @@ export class MerchantController {
 @Controller('merchants')
 export class MerchantPublicController {
   constructor(private readonly service: MerchantService) {}
-  @Get('offers/discover') discoverOffers() { return this.service.offers(null, true); }
+  @Get('offers/discover') discoverOffers() {
+    return this.service.offers(null, true);
+  }
   @Get('stories') stories(@Query() query: FeedDto) {
     return this.service.feed(undefined, {
       ...query,

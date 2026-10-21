@@ -45,7 +45,9 @@ describe('product review HTTP contract', () => {
     jest.clearAllMocks();
   });
   it('allows guest offer discovery without opening the saved-merchant feed', async () => {
-    await request(app.getHttpServer()).get('/merchants/offers/discover').expect(200, []);
+    await request(app.getHttpServer())
+      .get('/merchants/offers/discover')
+      .expect(200, []);
     expect(service.offers).toHaveBeenCalledWith(null, true);
     await request(app.getHttpServer()).get('/merchants/offers').expect(401);
   });
