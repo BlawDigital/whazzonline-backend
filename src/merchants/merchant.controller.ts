@@ -10,10 +10,11 @@ import {
   Query,
   Req,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import {
@@ -63,30 +64,26 @@ export class MerchantController {
   }
   @Post('content')
   @UseInterceptors(
-    FileInterceptor('media', {
-      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
-    }),
+    FileFieldsInterceptor([{ name: 'media', maxCount: 1 }, { name: 'music', maxCount: 1 }], { limits: { fileSize: 50 * 1024 * 1024, files: 2 } }),
   )
   create(
     @Req() req: AuthenticatedRequest,
     @Body() dto: ContentDto,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFiles() files?: { media?: Express.Multer.File[]; music?: Express.Multer.File[] },
   ) {
-    return this.service.createContent(req.user.sub, dto, file);
+    return this.service.createContent(req.user.sub, dto, files?.media?.[0], files?.music?.[0]);
   }
   @Patch('content/:id')
   @UseInterceptors(
-    FileInterceptor('media', {
-      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
-    }),
+    FileFieldsInterceptor([{ name: 'media', maxCount: 1 }, { name: 'music', maxCount: 1 }], { limits: { fileSize: 50 * 1024 * 1024, files: 2 } }),
   )
   update(
     @Req() req: AuthenticatedRequest,
     @Param('id') id: string,
     @Body() dto: UpdateContentDto,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFiles() files?: { media?: Express.Multer.File[]; music?: Express.Multer.File[] },
   ) {
-    return this.service.updateContent(req.user.sub, id, dto, file);
+    return this.service.updateContent(req.user.sub, id, dto, files?.media?.[0], files?.music?.[0]);
   }
   @Delete('content/:id') remove(
     @Req() req: AuthenticatedRequest,

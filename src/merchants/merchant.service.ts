@@ -18,7 +18,7 @@ import {
   ProductReviewsQuery,
   UpdateContentDto,
 } from './merchant.dto';
-import { uploadMerchantMedia } from './merchant-media';
+import { uploadMerchantMedia, uploadStoryMusic } from './merchant-media';
 import { cloudinaryClient } from '../storage/cloudinary-storage';
 import {
   orderNotificationSelect,
@@ -102,7 +102,9 @@ export class MerchantService {
     const trusted = [
       ...new Set([...saved, ...trusts.map((row) => row.vendorProfileId)]),
     ];
+    const storyCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const where = {
+      OR: [{ kind: { not: 'STORY' } }, { createdAt: { gt: storyCutoff } }],
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.savedOnly === 'true' ? { merchantId: { in: saved } } : {}),
       merchant: {
@@ -151,12 +153,19 @@ export class MerchantService {
             take: limit - first.length,
           })
         : [];
+    const rows = [...first, ...rest];
+    const storyCounts = query.kind === 'STORY' && rows.length ? await this.prisma.merchantContent.groupBy({
+      by: ['merchantId'], where: { ...where, kind: 'STORY', merchantId: { in: [...new Set(rows.map(row => row.merchantId))] } }, _count: { _all: true },
+    }) : [];
+    const counts = new Map(storyCounts.map(row => [row.merchantId, row._count._all]));
     return {
-      items: [...first, ...rest].map(({ mediaPublicId, ...row }) => {
+      items: rows.map(({ mediaPublicId, musicPublicId, ...row }) => {
         // The storage identifier is for owner-side cleanup only.
-        void mediaPublicId;
+        void mediaPublicId; void musicPublicId;
         return {
           ...row,
+          expiresAt: row.kind === 'STORY' ? new Date(row.createdAt.getTime() + 24 * 60 * 60 * 1000).toISOString() : null,
+          activeStoryCount: counts.get(row.merchantId),
           saved: saved.includes(row.merchantId),
           trusted: trusted.includes(row.merchantId),
         };
@@ -170,6 +179,7 @@ export class MerchantService {
     userId: string,
     dto: ContentDto,
     file?: Express.Multer.File,
+    musicFile?: Express.Multer.File,
   ) {
     const profile = await this.merchant(userId, true);
     if (profile.user.registrationType !== 'SELLER' && !this.isBusiness(profile))
@@ -183,8 +193,11 @@ export class MerchantService {
       throw new BadRequestException('SCROLL requires a video.');
     if (!dto.title.trim() || (dto.caption && !dto.caption.trim()))
       throw new BadRequestException('Content cannot contain only spaces.');
+    if (musicFile && dto.kind !== 'STORY') throw new BadRequestException('Music can only be added to Stories.');
     const media = await uploadMerchantMedia(file);
+    let music: Awaited<ReturnType<typeof uploadStoryMusic>> | undefined;
     try {
+      if (musicFile) music = await uploadStoryMusic(musicFile);
       return await this.prisma.merchantContent.create({
         data: {
           merchantId: profile.id,
@@ -195,9 +208,11 @@ export class MerchantService {
           mediaUrl: media.mediaUrl,
           mediaType: media.mediaType,
           mediaPublicId: media.publicId,
+          ...(music ? { musicUrl: music.url, musicPublicId: music.publicId } : {}),
         },
       });
     } catch (error) {
+      if (music) await cloudinaryClient().uploader.destroy(music.publicId, { resource_type: 'video' }).catch(() => undefined);
       await cloudinaryClient()
         .uploader.destroy(media.publicId, { resource_type: media.resourceType })
         .catch(() => undefined);
@@ -209,6 +224,7 @@ export class MerchantService {
     id: string,
     dto: UpdateContentDto,
     file?: Express.Multer.File,
+    musicFile?: Express.Multer.File,
   ) {
     const content = await this.prisma.merchantContent.findUnique({
       where: { id },
@@ -228,11 +244,15 @@ export class MerchantService {
       !file.mimetype.startsWith('video/')
     )
       throw new BadRequestException('SCROLL requires a video.');
+    if (musicFile && content.kind !== 'STORY') throw new BadRequestException('Music can only be added to Stories.');
     const media = file ? await uploadMerchantMedia(file) : undefined;
+    let music: Awaited<ReturnType<typeof uploadStoryMusic>> | undefined;
     try {
+      if (musicFile) music = await uploadStoryMusic(musicFile);
       const updated = await this.prisma.merchantContent.update({
         where: { id },
         data: {
+          ...(music ? { musicUrl: music.url, musicPublicId: music.publicId } : dto.removeMusic === 'true' ? { musicUrl: null, musicPublicId: null } : {}),
           ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
           ...(dto.caption !== undefined ? { caption: dto.caption.trim() } : {}),
           ...(dto.topic !== undefined ? { topic: dto.topic } : {}),
@@ -251,8 +271,10 @@ export class MerchantService {
             resource_type: content.mediaType === 'VIDEO' ? 'video' : 'image',
           })
           .catch(() => undefined);
+      if ((music || dto.removeMusic === 'true') && content.musicPublicId) await cloudinaryClient().uploader.destroy(content.musicPublicId, { resource_type: 'video' }).catch(() => undefined);
       return updated;
     } catch (error) {
+      if (music) await cloudinaryClient().uploader.destroy(music.publicId, { resource_type: 'video' }).catch(() => undefined);
       if (media)
         await cloudinaryClient()
           .uploader.destroy(media.publicId, {
@@ -276,6 +298,7 @@ export class MerchantService {
         resource_type: content.mediaType === 'VIDEO' ? 'video' : 'image',
       })
       .catch(() => undefined);
+    if (content.musicPublicId) await cloudinaryClient().uploader.destroy(content.musicPublicId, { resource_type: 'video' }).catch(() => undefined);
     return { deleted: true };
   }
   async offers(userId: string | null, explore = false) {
@@ -386,6 +409,7 @@ export class MerchantService {
       }),
       this.prisma.merchantContent.findMany({
         where: {
+          OR: [{ kind: { not: 'STORY' } }, { createdAt: { gt: new Date(Date.now() - 86400000) } }],
           merchant: {
             contacts: { some: { userId } },
             setupCompleted: true,

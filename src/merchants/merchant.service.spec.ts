@@ -1,11 +1,11 @@
 import { ForbiddenException } from '@nestjs/common';
 import { MerchantService } from './merchant.service';
 import { PrismaService } from 'prisma/prisma.service';
-import { uploadMerchantMedia } from './merchant-media';
+import { uploadMerchantMedia, uploadStoryMusic } from './merchant-media';
 import { cloudinaryClient } from '../storage/cloudinary-storage';
 
 jest.mock('prisma/prisma.service', () => ({ PrismaService: class {} }));
-jest.mock('./merchant-media', () => ({ uploadMerchantMedia: jest.fn() }));
+jest.mock('./merchant-media', () => ({ uploadMerchantMedia: jest.fn(), uploadStoryMusic: jest.fn() }));
 jest.mock('../storage/cloudinary-storage', () => ({
   cloudinaryClient: jest.fn(),
 }));
@@ -16,6 +16,7 @@ describe('merchant persistence and permissions', () => {
     merchantContact: { findMany: jest.fn(), upsert: jest.fn() },
     vendorTrustReview: { findMany: jest.fn() },
     merchantContent: {
+      groupBy: jest.fn(),
       count: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
@@ -39,6 +40,29 @@ describe('merchant persistence and permissions', () => {
     prisma.vendorProfile.findUnique.mockResolvedValue(merchant);
   });
 
+  it('filters Stories at the 24-hour cutoff, counts all active updates and hides storage identifiers', async () => {
+    const now = Date.parse('2026-10-21T12:00:00Z');
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      prisma.merchantContent.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+      prisma.merchantContent.findMany.mockResolvedValue([{ id: 'story', kind: 'STORY', merchantId: 'shop', createdAt: new Date(now - 1000), mediaPublicId: 'private', musicPublicId: 'private-audio' }]);
+      prisma.merchantContent.groupBy.mockResolvedValue([{ merchantId: 'shop', _count: { _all: 12 } }]);
+      const result = await service.feed(undefined, { kind: 'STORY', offset: 0, limit: 50 });
+      expect(prisma.merchantContent.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ OR: [{ kind: { not: 'STORY' } }, { createdAt: { gt: new Date(now - 86400000) } }] }) }));
+      expect(result.items[0]).toMatchObject({ activeStoryCount: 12, expiresAt: new Date(now - 1000 + 86400000).toISOString() });
+      expect(result.items[0]).not.toHaveProperty('mediaPublicId'); expect(result.items[0]).not.toHaveProperty('musicPublicId');
+    } finally { clock.mockRestore(); }
+  });
+  it('persists optional Story music and cleans up both new uploads when saving fails', async () => {
+    const destroy = jest.fn().mockResolvedValue({});
+    jest.mocked(cloudinaryClient).mockReturnValue({ uploader: { destroy } } as unknown as ReturnType<typeof cloudinaryClient>);
+    jest.mocked(uploadMerchantMedia).mockResolvedValue({ mediaUrl: 'https://media.example/image.jpg', mediaType: 'IMAGE', publicId: 'photo', resourceType: 'image' });
+    jest.mocked(uploadStoryMusic).mockResolvedValue({ url: 'https://media.example/music.mp3', publicId: 'music' });
+    prisma.merchantContent.create.mockRejectedValue(new Error('Database unavailable'));
+    await expect(service.createContent('merchant', { kind: 'STORY', title: 'New story' }, { mimetype: 'image/jpeg' } as Express.Multer.File, { mimetype: 'audio/mpeg' } as Express.Multer.File)).rejects.toThrow('Database unavailable');
+    expect(prisma.merchantContent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ musicUrl: 'https://media.example/music.mp3', musicPublicId: 'music' }) }));
+    expect(destroy).toHaveBeenCalledWith('music', { resource_type: 'video' }); expect(destroy).toHaveBeenCalledWith('photo', { resource_type: 'image' });
+  });
   it('denies edits to another merchant Story before uploading media', async () => {
     prisma.merchantContent.findUnique.mockResolvedValue({
       merchant: { userId: 'other' },
