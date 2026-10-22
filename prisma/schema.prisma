@@ -805,6 +805,8 @@ model MerchantContact {
 }
 
 model MerchantContent {
+  musicUrl      String?
+  musicPublicId String?
   id            String        @id @default(uuid())
   createdAt     DateTime      @default(now())
   merchantId    String

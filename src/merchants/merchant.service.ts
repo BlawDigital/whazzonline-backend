@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import {
+  NotificationsQuery,
   AisleDto,
   ContentDto,
   FeedDto,
@@ -18,7 +19,7 @@ import {
   ProductReviewsQuery,
   UpdateContentDto,
 } from './merchant.dto';
-import { uploadMerchantMedia } from './merchant-media';
+import { uploadMerchantMedia, uploadStoryMusic } from './merchant-media';
 import { cloudinaryClient } from '../storage/cloudinary-storage';
 import {
   orderNotificationSelect,
@@ -102,7 +103,9 @@ export class MerchantService {
     const trusted = [
       ...new Set([...saved, ...trusts.map((row) => row.vendorProfileId)]),
     ];
+    const storyCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const where = {
+      OR: [{ kind: { not: 'STORY' } }, { createdAt: { gt: storyCutoff } }],
       ...(query.kind ? { kind: query.kind } : {}),
       ...(query.savedOnly === 'true' ? { merchantId: { in: saved } } : {}),
       merchant: {
@@ -151,12 +154,38 @@ export class MerchantService {
             take: limit - first.length,
           })
         : [];
+    const rows = [...first, ...rest];
+    const storyCounts =
+      query.kind === 'STORY' && rows.length
+        ? await this.prisma.merchantContent.groupBy({
+            by: ['merchantId'],
+            where: {
+              ...where,
+              kind: 'STORY',
+              merchantId: {
+                in: [...new Set(rows.map((row) => row.merchantId))],
+              },
+            },
+            _count: { _all: true },
+          })
+        : [];
+    const counts = new Map(
+      storyCounts.map((row) => [row.merchantId, row._count._all]),
+    );
     return {
-      items: [...first, ...rest].map(({ mediaPublicId, ...row }) => {
+      items: rows.map(({ mediaPublicId, musicPublicId, ...row }) => {
         // The storage identifier is for owner-side cleanup only.
         void mediaPublicId;
+        void musicPublicId;
         return {
           ...row,
+          expiresAt:
+            row.kind === 'STORY'
+              ? new Date(
+                  row.createdAt.getTime() + 24 * 60 * 60 * 1000,
+                ).toISOString()
+              : null,
+          activeStoryCount: counts.get(row.merchantId),
           saved: saved.includes(row.merchantId),
           trusted: trusted.includes(row.merchantId),
         };
@@ -170,6 +199,7 @@ export class MerchantService {
     userId: string,
     dto: ContentDto,
     file?: Express.Multer.File,
+    musicFile?: Express.Multer.File,
   ) {
     const profile = await this.merchant(userId, true);
     if (profile.user.registrationType !== 'SELLER' && !this.isBusiness(profile))
@@ -183,8 +213,12 @@ export class MerchantService {
       throw new BadRequestException('SCROLL requires a video.');
     if (!dto.title.trim() || (dto.caption && !dto.caption.trim()))
       throw new BadRequestException('Content cannot contain only spaces.');
+    if (musicFile && dto.kind !== 'STORY')
+      throw new BadRequestException('Music can only be added to Stories.');
     const media = await uploadMerchantMedia(file);
+    let music: Awaited<ReturnType<typeof uploadStoryMusic>> | undefined;
     try {
+      if (musicFile) music = await uploadStoryMusic(musicFile);
       return await this.prisma.merchantContent.create({
         data: {
           merchantId: profile.id,
@@ -195,9 +229,16 @@ export class MerchantService {
           mediaUrl: media.mediaUrl,
           mediaType: media.mediaType,
           mediaPublicId: media.publicId,
+          ...(music
+            ? { musicUrl: music.url, musicPublicId: music.publicId }
+            : {}),
         },
       });
     } catch (error) {
+      if (music)
+        await cloudinaryClient()
+          .uploader.destroy(music.publicId, { resource_type: 'video' })
+          .catch(() => undefined);
       await cloudinaryClient()
         .uploader.destroy(media.publicId, { resource_type: media.resourceType })
         .catch(() => undefined);
@@ -209,6 +250,7 @@ export class MerchantService {
     id: string,
     dto: UpdateContentDto,
     file?: Express.Multer.File,
+    musicFile?: Express.Multer.File,
   ) {
     const content = await this.prisma.merchantContent.findUnique({
       where: { id },
@@ -228,11 +270,20 @@ export class MerchantService {
       !file.mimetype.startsWith('video/')
     )
       throw new BadRequestException('SCROLL requires a video.');
+    if (musicFile && content.kind !== 'STORY')
+      throw new BadRequestException('Music can only be added to Stories.');
     const media = file ? await uploadMerchantMedia(file) : undefined;
+    let music: Awaited<ReturnType<typeof uploadStoryMusic>> | undefined;
     try {
+      if (musicFile) music = await uploadStoryMusic(musicFile);
       const updated = await this.prisma.merchantContent.update({
         where: { id },
         data: {
+          ...(music
+            ? { musicUrl: music.url, musicPublicId: music.publicId }
+            : dto.removeMusic === 'true'
+              ? { musicUrl: null, musicPublicId: null }
+              : {}),
           ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
           ...(dto.caption !== undefined ? { caption: dto.caption.trim() } : {}),
           ...(dto.topic !== undefined ? { topic: dto.topic } : {}),
@@ -251,8 +302,16 @@ export class MerchantService {
             resource_type: content.mediaType === 'VIDEO' ? 'video' : 'image',
           })
           .catch(() => undefined);
+      if ((music || dto.removeMusic === 'true') && content.musicPublicId)
+        await cloudinaryClient()
+          .uploader.destroy(content.musicPublicId, { resource_type: 'video' })
+          .catch(() => undefined);
       return updated;
     } catch (error) {
+      if (music)
+        await cloudinaryClient()
+          .uploader.destroy(music.publicId, { resource_type: 'video' })
+          .catch(() => undefined);
       if (media)
         await cloudinaryClient()
           .uploader.destroy(media.publicId, {
@@ -276,9 +335,13 @@ export class MerchantService {
         resource_type: content.mediaType === 'VIDEO' ? 'video' : 'image',
       })
       .catch(() => undefined);
+    if (content.musicPublicId)
+      await cloudinaryClient()
+        .uploader.destroy(content.musicPublicId, { resource_type: 'video' })
+        .catch(() => undefined);
     return { deleted: true };
   }
-  async offers(userId: string, explore = false) {
+  async offers(userId: string | null, explore = false) {
     const now = new Date();
     const offers = await this.prisma.offer.findMany({
       where: {
@@ -289,8 +352,10 @@ export class MerchantService {
           setupCompleted: true,
           user: { isActive: true },
           ...(explore
-            ? { userId: { not: userId } }
-            : { contacts: { some: { userId } } }),
+            ? userId
+              ? { userId: { not: userId } }
+              : {}
+            : { contacts: { some: { userId: userId! } } }),
         },
       },
       include: {
@@ -333,8 +398,10 @@ export class MerchantService {
           setupCompleted: true,
           user: { isActive: true },
           ...(explore
-            ? { userId: { not: userId } }
-            : { contacts: { some: { userId } } }),
+            ? userId
+              ? { userId: { not: userId } }
+              : {}
+            : { contacts: { some: { userId: userId! } } }),
         },
       },
       select: {
@@ -376,8 +443,16 @@ export class MerchantService {
       })),
     ];
   }
-  async notifications(userId: string) {
-    const [orders, posts, reads, supportReplies] = await Promise.all([
+  async notifications(userId: string, query?: NotificationsQuery) {
+    const [
+      orders,
+      posts,
+      reads,
+      supportReplies,
+      offers,
+      promotions,
+      inventory,
+    ] = await Promise.all([
       this.prisma.commerceOrder.findMany({
         where: { OR: [{ userId }, { items: { some: { vendorId: userId } } }] },
         select: orderNotificationSelect,
@@ -386,6 +461,10 @@ export class MerchantService {
       }),
       this.prisma.merchantContent.findMany({
         where: {
+          OR: [
+            { kind: { not: 'STORY' } },
+            { createdAt: { gt: new Date(Date.now() - 86400000) } },
+          ],
           merchant: {
             contacts: { some: { userId } },
             setupCompleted: true,
@@ -396,6 +475,7 @@ export class MerchantService {
           id: true,
           title: true,
           kind: true,
+          topic: true,
           createdAt: true,
           merchant: { select: { storeName: true, userId: true } },
         },
@@ -415,18 +495,109 @@ export class MerchantService {
         orderBy: { createdAt: 'desc' },
         take: 100,
       }),
+      this.prisma.offer.findMany({
+        where: {
+          status: { in: ['ACTIVE', 'SCHEDULED'] },
+          startsAt: { lte: new Date() },
+          endsAt: { gt: new Date() },
+          vendorProfile: {
+            setupCompleted: true,
+            user: { isActive: true },
+            OR: [{ userId }, { contacts: { some: { userId } } }],
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          startsAt: true,
+          vendorProfile: { select: { userId: true, storeName: true } },
+        },
+        orderBy: { startsAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.product.findMany({
+        where: {
+          ...legacyPromotionWhere(new Date()),
+          vendorProfile: {
+            setupCompleted: true,
+            user: { isActive: true },
+            OR: [{ userId }, { contacts: { some: { userId } } }],
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          promoStartsAt: true,
+          vendorProfile: { select: { userId: true, storeName: true } },
+        },
+        orderBy: { promoStartsAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.product.findMany({
+        where: {
+          status: 'ACTIVE',
+          quantity: { lte: 5 },
+          vendorProfile: { userId },
+        },
+        select: { id: true, name: true, quantity: true, updatedAt: true },
+        orderBy: { updatedAt: 'desc' },
+        take: 100,
+      }),
     ]);
     const keys = new Set(reads.map((row) => row.key));
     const notices = [
-      ...orders.flatMap((order) => orderNotices(order, userId)),
-      ...supportReplies.map(supportReplyNotice),
+      ...orders
+        .flatMap((order) => orderNotices(order, userId))
+        .map((n) => ({ ...n, category: 'orders' })),
+      ...supportReplies
+        .map(supportReplyNotice)
+        .map((n) => ({ ...n, category: n.orderId ? 'orders' : 'system' })),
       ...posts.map((post) => ({
         id: `merchant-content:${post.id}`,
+        category: post.topic === 'OFFER' ? 'promotions' : 'system',
+        type: post.kind.toLowerCase(),
         title: `${post.merchant.storeName} · ${post.kind === 'STORY' ? 'Story' : 'SCROLL'}`,
         body: post.title,
         createdAt: post.createdAt.toISOString(),
         orderId: undefined as string | undefined,
         merchantId: post.merchant.userId,
+        read: false,
+      })),
+      ...offers.map((offer) => ({
+        id: `offer:${offer.id}`,
+        category: 'offers',
+        type: 'offer',
+        title: `${offer.vendorProfile.storeName} · New offer`,
+        body:
+          offer.name ||
+          offer.description ||
+          'An offer is available. View the offer for details.',
+        createdAt: offer.startsAt.toISOString(),
+        merchantId: offer.vendorProfile.userId,
+        offerId: offer.id,
+        read: false,
+      })),
+      ...promotions.map((product) => ({
+        id: `promotion:${product.id}:${product.promoStartsAt!.getTime()}`,
+        category: 'promotions',
+        type: 'promotion',
+        title: `${product.vendorProfile.storeName} · Promotion`,
+        body: `${product.name} is on promotion.`,
+        createdAt: product.promoStartsAt!.toISOString(),
+        merchantId: product.vendorProfile.userId,
+        productId: product.id,
+        read: false,
+      })),
+      ...inventory.map((product) => ({
+        id: `inventory:${product.id}:${product.updatedAt.getTime()}`,
+        category: 'system',
+        type: 'inventory',
+        title: 'Inventory alert',
+        body: `${product.name} has ${product.quantity} ${product.quantity === 1 ? 'unit' : 'units'} left in stock.`,
+        createdAt: product.updatedAt.toISOString(),
+        merchantId: userId,
+        productId: product.id,
         read: false,
       })),
     ]
@@ -435,16 +606,28 @@ export class MerchantService {
         read: notice.read || keys.has(notice.id),
       }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    const filtered = notices.filter(
+      (n) =>
+        !query?.category ||
+        query.category === 'all' ||
+        n.category === query.category,
+    );
+    const offset = query?.offset || 0;
+    const limit = query?.limit ?? filtered.length;
     return {
-      notifications: notices,
+      notifications: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      hasMore: offset + limit < filtered.length,
       unreadCount: notices.filter((notice) => !notice.read).length,
     };
   }
-  async readNotifications(userId: string) {
+  async readNotifications(userId: string, id?: string) {
     const feed = await this.notifications(userId);
+    if (id && !feed.notifications.some((n) => n.id === id))
+      throw new NotFoundException('Notification not found in your account.');
     await this.prisma.sellerNotificationRead.createMany({
       data: feed.notifications
-        .filter((row) => !row.read)
+        .filter((row) => !row.read && (!id || row.id === id))
         .map((row) => ({ userId, key: row.id })),
       skipDuplicates: true,
     });

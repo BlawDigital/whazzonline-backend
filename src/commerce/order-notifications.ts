@@ -5,6 +5,7 @@ export interface OrderNotice {
   createdAt: string;
   read: boolean;
   type: string;
+  audience?: 'buyer' | 'seller';
   orderId?: string;
   ticketId?: string;
   merchantId?: string;
@@ -70,6 +71,7 @@ export function orderNotices(
         orderId: order.id,
         title: buyer ? 'Your order update' : 'New order',
         type: 'order',
+        audience: buyer ? 'buyer' : 'seller',
         read: false,
         body: `Order #${displayId} is ${order.status.replace(/_/g, ' ')}.`,
         createdAt: order.updatedAt.toISOString(),
@@ -80,6 +82,7 @@ export function orderNotices(
       id: event.id,
       orderId: order.id,
       type: 'order',
+      audience: buyer ? ('buyer' as const) : ('seller' as const),
       title: event.reason?.startsWith('Buyer reported')
         ? 'Transfer awaiting confirmation'
         : event.reason?.startsWith('Payment confirmed')
@@ -111,6 +114,7 @@ export function orderNotices(
             id: `delivery:${fulfillment.deliveryRequest.id}`,
             orderId: order.id,
             type: 'order',
+            audience: buyer ? ('buyer' as const) : ('seller' as const),
             title: 'Delivery requested',
             body: `${fulfillment.deliveryRequest.serviceLevel === 'priority' ? 'Priority Express' : 'Standard Delivery'} requested for order #${displayId}.`,
             createdAt: fulfillment.deliveryRequest.createdAt.toISOString(),
@@ -138,6 +142,7 @@ export function supportReplyNotice(message: {
   return {
     id: `support:${message.id}`,
     type: 'order',
+    audience: 'seller',
     ticketId: message.ticketId,
     ...(message.ticket.orderId ? { orderId: message.ticket.orderId } : {}),
     title: 'Merchant Support reply',

@@ -37,6 +37,7 @@ export class FeedDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit = 20;
 }
 export class UpdateContentDto {
+  @IsOptional() @IsIn(['true', 'false']) removeMusic?: string;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(120) title?: string;
   @IsOptional() @IsString() @MaxLength(3000) caption?: string;
   @IsOptional()
@@ -69,4 +70,12 @@ export class ProductReviewsQuery {
   @IsOptional() @IsIn(['recent', 'highest', 'lowest']) sort = 'recent';
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset = 0;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit = 20;
+}
+
+export class NotificationsQuery {
+  @IsOptional()
+  @IsIn(['all', 'orders', 'offers', 'promotions', 'system'])
+  category?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset = 0;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }

@@ -13,6 +13,7 @@ import { MerchantService } from './merchant.service';
 describe('product review HTTP contract', () => {
   let app: INestApplication<Server>, jwt: JwtService;
   const service = {
+    offers: jest.fn().mockResolvedValue([]),
     reviews: jest
       .fn()
       .mockResolvedValue({ items: [], distribution: {}, total: 0, average: 0 }),
@@ -42,6 +43,13 @@ describe('product review HTTP contract', () => {
   afterAll(async () => app.close());
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+  it('allows guest offer discovery without opening the saved-merchant feed', async () => {
+    await request(app.getHttpServer())
+      .get('/merchants/offers/discover')
+      .expect(200, []);
+    expect(service.offers).toHaveBeenCalledWith(null, true);
+    await request(app.getHttpServer()).get('/merchants/offers').expect(401);
   });
   it('allows public reads with validated search/sort/pagination and protects viewer/write endpoints', async () => {
     const response = await request(app.getHttpServer())
