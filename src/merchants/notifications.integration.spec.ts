@@ -94,6 +94,8 @@ const isolated =
       });
     });
     afterAll(async () => {
+      if (db && merchantPurchaseId)
+        await db.commerceOrder.delete({ where: { id: merchantPurchaseId } });
       if (db)
         await db.user.deleteMany({
           where: { id: { in: [seller, buyer, outsider] } },
@@ -188,37 +190,37 @@ const isolated =
         .expect(200);
       expect((response.body as { unreadCount: number }).unreadCount).toBe(0);
     });
+    it('identifies a merchant own purchase as a buyer notification', async () => {
+      const order = await db.commerceOrder.create({
+        data: {
+          userId: seller,
+          deliveryAddress: 'Isolated fixture',
+          latitude: 0,
+          longitude: 0,
+          paymentMethod: 'bank',
+          subtotal: 10000,
+          serviceFee: 0,
+          deliveryFee: 0,
+          total: 10000,
+        },
+      });
+      merchantPurchaseId = order.id;
+      const sellerToken = await app.get(JwtService).signAsync({ sub: seller });
+      const response = await request(app.getHttpServer())
+        .get('/merchants/notifications?category=orders')
+        .auth(sellerToken, { type: 'bearer' })
+        .expect(200);
+      expect(
+        (
+          response.body as {
+            notifications: { orderId: string; audience: string }[];
+          }
+        ).notifications,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ orderId: order.id, audience: 'buyer' }),
+        ]),
+      );
+    });
   },
 );
-it('identifies a merchant own purchase as a buyer notification', async () => {
-  const order = await db.commerceOrder.create({
-    data: {
-      userId: seller,
-      deliveryAddress: 'Isolated fixture',
-      latitude: 0,
-      longitude: 0,
-      paymentMethod: 'bank',
-      subtotal: 10000,
-      serviceFee: 0,
-      deliveryFee: 0,
-      total: 10000,
-    },
-  });
-  merchantPurchaseId = order.id;
-  const sellerToken = await app.get(JwtService).signAsync({ sub: seller });
-  const response = await request(app.getHttpServer())
-    .get('/merchants/notifications?category=orders')
-    .auth(sellerToken, { type: 'bearer' })
-    .expect(200);
-  expect(
-    (
-      response.body as {
-        notifications: { orderId: string; audience: string }[];
-      }
-    ).notifications,
-  ).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ orderId: order.id, audience: 'buyer' }),
-    ]),
-  );
-});
