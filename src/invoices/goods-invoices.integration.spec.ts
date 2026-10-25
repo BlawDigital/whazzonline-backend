@@ -2,6 +2,9 @@ import { randomUUID, randomBytes, createHmac } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isolatedInvoiceDatabase } from '../../test/helpers/isolated-invoice-database';
 import { GoodsInvoicesService } from './goods-invoices.service';
+import { WalletService } from '../wallet/wallet.service';
+import { WalletController } from '../wallet/wallet.controller';
+import * as bcrypt from 'bcrypt';
 import { CommerceService } from '../commerce/commerce.service';
 import { SellerOrdersService } from '../commerce/seller-orders.service';
 import { MockDeliveryProvider } from '../commerce/delivery.provider';
@@ -122,7 +125,7 @@ databaseTests('direct merchant invoice integration', () => {
     if (cleanup) await cleanup();
   });
   async function checkout(ids = [product], key = randomUUID()) {
-    const selected = [];
+    const selected: { cartItemId: string; quantity: number }[] = [];
     for (const id of ids) {
       const item = await commerce.addItem(buyer, {
         productId: id,
@@ -539,6 +542,302 @@ databaseTests('direct merchant invoice integration', () => {
         .auth(merchantToken, { type: 'bearer' })
         .send({ reference: 'merchant-bank-credit', received: true })
         .expect(201);
+    } finally {
+      await app.close();
+    }
+  });
+  it('authorizes wallet payments once, settles every merchant and preserves balances on errors', async () => {
+    const batch = await checkout([product, otherProduct]);
+    const wallets = new WalletService(prisma);
+    await wallets.summary(buyer);
+    await prisma.wallet.update({
+      where: { userId: buyer },
+      data: {
+        availableBalance: 20000,
+        mainBalance: 15000,
+        referralBonus: 5000,
+        pinHash: await bcrypt.hash('1234', 12),
+        pinAttempts: 0,
+        pinLockedUntil: null,
+      },
+    });
+    const before = await Promise.all(
+      [vendor, otherVendor].map(async (userId) => {
+        await wallets.summary(userId);
+        return prisma.wallet.findUniqueOrThrow({ where: { userId } });
+      }),
+    );
+    await expect(
+      invoices.payWallet(otherVendor, batch.id, {
+        pin: '1234',
+        expectedTotal: batch.total,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toThrow('not found');
+    await expect(
+      invoices.payWallet(buyer, batch.id, {
+        pin: '1234',
+        expectedTotal: 1,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toThrow('total has changed');
+    await expect(
+      invoices.payWallet(buyer, batch.id, {
+        pin: '0000',
+        expectedTotal: batch.total,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toThrow('Incorrect wallet PIN');
+    expect(
+      (await prisma.wallet.findUniqueOrThrow({ where: { userId: buyer } }))
+        .pinAttempts,
+    ).toBe(1);
+    expect(
+      (await prisma.wallet.findUniqueOrThrow({ where: { userId: buyer } }))
+        .availableBalance,
+    ).toBe(20000);
+    const result = await Promise.all(
+      [1, 2].map(() =>
+        invoices.payWallet(buyer, batch.id, {
+          pin: '1234',
+          expectedTotal: batch.total,
+          requestId: randomUUID(),
+        }),
+      ),
+    );
+    expect(result.every((value) => value.paid)).toBe(true);
+    expect(
+      (await prisma.wallet.findUniqueOrThrow({ where: { userId: buyer } }))
+        .availableBalance,
+    ).toBe(20000 - batch.total);
+    expect(
+      await prisma.walletTransaction.count({
+        where: { reference: `goods:${batch.id}:debit` },
+      }),
+    ).toBe(1);
+    for (let i = 0; i < before.length; i++) {
+      const invoice = batch.invoices.find(
+        (invoice) => invoice.vendorId === before[i].userId,
+      )!;
+      const wallet = await prisma.wallet.findUniqueOrThrow({
+        where: { id: before[i].id },
+      });
+      expect(wallet.availableBalance).toBe(
+        before[i].availableBalance + invoice.total,
+      );
+      expect(wallet.mainBalance).toBe(before[i].mainBalance + invoice.total);
+      expect(
+        (await invoices.get(invoice.id, { userId: buyer })).paymentMethod,
+      ).toBe('wallet');
+    }
+    const another = await checkout([product]);
+    await prisma.wallet.update({
+      where: { userId: buyer },
+      data: { availableBalance: 1, mainBalance: 1, referralBonus: 0 },
+    });
+    await expect(
+      invoices.payWallet(buyer, another.id, {
+        pin: '1234',
+        expectedTotal: another.total,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toThrow('Insufficient');
+    expect(
+      (await invoices.get(another.invoices[0].id, { userId: buyer })).status,
+    ).toBe('OPEN');
+    await prisma.wallet.update({
+      where: { userId: buyer },
+      data: { pinAttempts: 4 },
+    });
+    await expect(
+      invoices.payWallet(buyer, another.id, {
+        pin: '0000',
+        expectedTotal: another.total,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toThrow('locked');
+    await expect(
+      invoices.payWallet(buyer, another.id, {
+        pin: '1234',
+        expectedTotal: another.total,
+        requestId: randomUUID(),
+      }),
+    ).rejects.toThrow('locked');
+  });
+  it('sets and recovers wallet PINs using a separate one-use contact challenge', async () => {
+    const saved = {
+      key: process.env.RESEND_API_KEY,
+      from: process.env.EMAIL_FROM,
+    };
+    const wallets = new WalletService(prisma);
+    try {
+      process.env.RESEND_API_KEY = 'test-provider-key';
+      process.env.EMAIL_FROM = 'test@example.com';
+      const challenge = await wallets.requestPin(buyer, 'email');
+      const calls = (global.fetch as jest.Mock).mock.calls;
+      const call = [...calls]
+        .reverse()
+        .find((call) => String(call[0]).includes('resend.com'))!;
+      const code = JSON.parse(call[1].body).text.match(/\b\d{6}\b/)[0];
+      await expect(
+        wallets.setPin(otherVendor, {
+          challengeId: challenge.challengeId,
+          pin: '5678',
+          code,
+        }),
+      ).rejects.toThrow('new wallet verification');
+      await wallets.setPin(buyer, {
+        challengeId: challenge.challengeId,
+        pin: '5678',
+        code,
+      });
+      const wallet = await prisma.wallet.findUniqueOrThrow({
+        where: { userId: buyer },
+      });
+      expect(wallet.pinHash).not.toBe('5678');
+      expect(await bcrypt.compare('5678', wallet.pinHash!)).toBe(true);
+      expect(wallet.pinAttempts).toBe(0);
+      expect(wallet.pinLockedUntil).toBeNull();
+      await expect(
+        wallets.setPin(buyer, {
+          challengeId: challenge.challengeId,
+          pin: '1234',
+          code,
+        }),
+      ).rejects.toThrow('new wallet verification');
+      expect(await wallets.summary(buyer)).not.toHaveProperty('pinHash');
+    } finally {
+      if (saved.key === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = saved.key;
+      if (saved.from === undefined) delete process.env.EMAIL_FROM;
+      else process.env.EMAIL_FROM = saved.from;
+    }
+  });
+  it('creates merchant orders with variants, pending payment and honest delivery statuses; retries never duplicate', async () => {
+    const saved = {
+      key: process.env.RESEND_API_KEY,
+      from: process.env.EMAIL_FROM,
+    };
+    process.env.RESEND_API_KEY = 'test-provider-key';
+    process.env.EMAIL_FROM = 'test@example.com';
+    const variantProduct = await prisma.product.create({
+      data: {
+        vendorProfileId: (
+          await prisma.vendorProfile.findUniqueOrThrow({
+            where: { userId: vendor },
+          })
+        ).id,
+        category: 'Bags',
+        name: 'Variant bag',
+        unitPrice: 2000,
+        quantity: 4,
+        imageUrls: [],
+        variants: [{ options: { Color: 'Brown', Size: 'Large' }, quantity: 4 }],
+      },
+    });
+    const dto = {
+      requestId: randomUUID(),
+      guestAccessToken: randomBytes(32).toString('hex'),
+      items: [
+        {
+          productId: variantProduct.id,
+          quantity: 2,
+          selectedVariants: { Color: 'Brown', Size: 'Large' },
+        },
+      ],
+      buyer: { name: 'Guest Buyer', email: 'guest@example.com' },
+      channels: ['email' as const],
+      deliveryAddress: 'Agreed delivery in Lagos',
+      deliveryFee: 500,
+    };
+    const fetchMock = global.fetch as jest.Mock;
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ id: 'email-accepted' }),
+    }));
+    try {
+      const first = await invoices.createMerchantOrder(vendor, dto);
+      expect(first.total).toBe(4500);
+      expect(first.paymentStatus).toBe('pending');
+      expect(first.deliveries[0].status).toBe('SENT');
+      expect(first.invoice.items[0].selectedVariants).toEqual({
+        Color: 'Brown',
+        Size: 'Large',
+      });
+      const count = fetchMock.mock.calls.length;
+      const repeated = await invoices.createMerchantOrder(vendor, dto);
+      expect(repeated.id).toBe(first.id);
+      expect(fetchMock.mock.calls.length).toBe(count);
+      expect(
+        (
+          await prisma.product.findUniqueOrThrow({
+            where: { id: variantProduct.id },
+          })
+        ).quantity,
+      ).toBe(2);
+      await expect(
+        invoices.createMerchantOrder(otherVendor, {
+          ...dto,
+          requestId: randomUUID(),
+        }),
+      ).rejects.toThrow('own active products');
+      await expect(
+        invoices.createMerchantOrder(vendor, {
+          ...dto,
+          requestId: randomUUID(),
+          items: [{ ...dto.items[0], selectedVariants: {} }],
+        }),
+      ).rejects.toThrow('Choose an available option');
+      fetchMock.mockImplementation(async () => ({
+        ok: false,
+        json: async () => ({}),
+      }));
+      const failed = await invoices.createMerchantOrder(vendor, {
+        ...dto,
+        requestId: randomUUID(),
+        items: [{ ...dto.items[0], quantity: 1 }],
+      });
+      expect(failed.deliveries[0].status).toBe('FAILED');
+      expect(failed.paymentStatus).toBe('pending');
+    } finally {
+      if (saved.key === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = saved.key;
+      if (saved.from === undefined) delete process.env.EMAIL_FROM;
+      else process.env.EMAIL_FROM = saved.from;
+    }
+  });
+  it('enforces wallet owner and PIN request validation at the HTTP boundary', async () => {
+    const module = await Test.createTestingModule({
+      imports: [JwtModule.register({ secret: jwtSecret })],
+      controllers: [WalletController],
+      providers: [
+        { provide: WalletService, useValue: new WalletService(prisma) },
+        { provide: GoodsInvoicesService, useValue: invoices },
+      ],
+    }).compile();
+    const app = module.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        transform: true,
+        forbidNonWhitelisted: true,
+      }),
+    );
+    await app.init();
+    try {
+      const token = module.get(JwtService).sign({ sub: buyer });
+      await request(app.getHttpServer())
+        .get(`/users/${buyer}/wallet`)
+        .expect(401);
+      await request(app.getHttpServer())
+        .get(`/users/${otherVendor}/wallet`)
+        .auth(token, { type: 'bearer' })
+        .expect(403);
+      await request(app.getHttpServer())
+        .post(`/users/${buyer}/wallet/orders/${randomUUID()}/pay`)
+        .auth(token, { type: 'bearer' })
+        .send({ pin: '123', expectedTotal: 10, requestId: randomUUID() })
+        .expect(400);
     } finally {
       await app.close();
     }

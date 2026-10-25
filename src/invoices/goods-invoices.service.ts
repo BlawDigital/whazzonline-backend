@@ -1,4 +1,12 @@
-import { storedVariants, variantIndex } from '../common/product-options';
+import {
+  storedVariants,
+  variantIndex,
+  variantImage,
+} from '../common/product-options';
+import { MerchantOrderInvoiceDto } from './invoice.dto';
+import { normalizePhone } from '../auth/phone/normalize-phone';
+import { deliverInvoice } from './invoice-delivery';
+import * as bcrypt from 'bcrypt';
 import {
   applyOfferPricing,
   deliveryOfferFee,
@@ -57,6 +65,7 @@ const invoiceInclude = {
   },
   vendorProfile: { select: { storeName: true, userId: true } },
   reports: { orderBy: { createdAt: 'desc' as const } },
+  deliveries: true,
 } satisfies Prisma.GoodsInvoiceInclude;
 type InvoiceRecord = Prisma.GoodsInvoiceGetPayload<{
   include: typeof invoiceInclude;
@@ -66,6 +75,194 @@ const hash = (value: string) =>
 @Injectable()
 export class GoodsInvoicesService {
   constructor(private readonly prisma: PrismaService) {}
+  async walletOrder(userId: string, orderId: string) {
+    const order = await this.prisma.commerceOrder.findFirst({
+      where: { id: orderId, userId },
+      include: { invoices: true },
+    });
+    if (!order) throw new NotFoundException('Order not found.');
+    const debit = await this.prisma.walletTransaction.findUnique({
+      where: { reference: `goods:${orderId}:debit` },
+      select: { amount: true },
+    });
+    return {
+      id: order.id,
+      paymentMethod: order.paymentMethod,
+      walletPaidTotal: debit ? Math.abs(debit.amount) : null,
+      total: order.invoices
+        .filter((i) => i.status !== 'PAID')
+        .reduce((sum, i) => sum + i.total, 0),
+      originalTotal: order.total,
+      paymentStatus: order.paymentStatus,
+      deliveryAddress: order.deliveryAddress,
+      invoices: order.invoices.map((i) => ({
+        id: i.id,
+        number: i.number,
+        total: i.total,
+        status: i.status,
+      })),
+    };
+  }
+  async payWallet(
+    userId: string,
+    orderId: string,
+    dto: { pin: string; expectedTotal: number; requestId: string },
+  ) {
+    const result = await this.transaction(async (tx) => {
+      await lockOrder(tx, orderId);
+      const order = await tx.commerceOrder.findFirst({
+        where: { id: orderId, userId, user: { isActive: true } },
+        include: { invoices: true },
+      });
+      if (!order) throw new NotFoundException('Order not found.');
+      if (
+        order.invoices.length &&
+        order.invoices.every((i) => i.status === 'PAID')
+        ) {
+          const debit = await tx.walletTransaction.findUnique({
+            where: { reference: `goods:${orderId}:debit` },
+          });
+          if (!debit)
+            throw new BadRequestException('This order has already been paid using another payment method.');
+          return { paid: true, orderId, total: Math.abs(debit.amount) };
+        }
+      const unpaid = order.invoices.filter((i) => i.status !== 'PAID');
+      if (
+        !unpaid.length ||
+        unpaid.some(
+          (i) =>
+            i.status !== 'OPEN' ||
+            i.checkoutReference ||
+            i.expiresAt <= new Date(),
+        )
+      )
+        throw new BadRequestException(
+          'Review your invoices before paying. A payment may already be in progress or an invoice may have expired.',
+        );
+      if (order.invoices.some((i) => i.vendorId === userId))
+        throw new BadRequestException(
+          'You cannot pay your own merchant invoice.',
+        );
+      const total = unpaid.reduce((sum, i) => sum + i.total, 0);
+      if (total !== dto.expectedTotal)
+        throw new BadRequestException(
+          'The total has changed. Review your invoices before paying.',
+        );
+      const participants = [
+        ...new Set([userId, ...order.invoices.map((i) => i.vendorId)]),
+      ].sort();
+      for (const id of participants) {
+        await tx.wallet.upsert({
+          where: { userId: id },
+          create: { userId: id },
+          update: {},
+        });
+        await tx.$queryRaw`SELECT "id" FROM "Wallet" WHERE "userId" = ${id} FOR UPDATE`;
+      }
+      const wallet = await tx.wallet.findUniqueOrThrow({ where: { userId } });
+      if (!wallet.pinHash)
+        return { error: 'Set up your wallet PIN before paying.' };
+      if (wallet.pinLockedUntil && wallet.pinLockedUntil > new Date())
+        return {
+          error:
+            'Your wallet PIN is locked. Try again in 15 minutes or reset your PIN.',
+        };
+      if (!(await bcrypt.compare(dto.pin, wallet.pinHash))) {
+        const attempts =
+          (wallet.pinLockedUntil && wallet.pinLockedUntil <= new Date()
+            ? 0
+            : wallet.pinAttempts) + 1;
+        await tx.wallet.update({
+          where: { userId },
+          data: {
+            pinAttempts: attempts,
+            pinLockedUntil:
+              attempts >= 5 ? new Date(Date.now() + 15 * 60000) : null,
+          },
+        });
+        return {
+          error:
+            attempts >= 5
+              ? 'Your wallet PIN is locked for 15 minutes.'
+              : 'Incorrect wallet PIN. Please try again.',
+        };
+      }
+      await tx.wallet.update({
+        where: { userId },
+        data: { pinAttempts: 0, pinLockedUntil: null },
+      });
+      if (wallet.availableBalance < total)
+        return {
+          error: 'Insufficient wallet balance. Choose another payment method.',
+        };
+      const mainDebit = Math.min(wallet.mainBalance, total);
+      await tx.wallet.update({
+        where: { userId },
+        data: {
+          availableBalance: { decrement: total },
+          mainBalance: { decrement: mainDebit },
+          referralBonus: Math.max(
+            0,
+            wallet.referralBonus - (total - mainDebit),
+          ),
+          pinAttempts: 0,
+          pinLockedUntil: null,
+        },
+      });
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          amount: -total,
+          type: 'PURCHASE',
+          reference: `goods:${orderId}:debit`,
+          description: `Payment for order ${orderId}`,
+        },
+      });
+      for (const invoice of unpaid) {
+        const merchant = await tx.wallet.update({
+          where: { userId: invoice.vendorId },
+          data: {
+            availableBalance: { increment: invoice.total },
+            mainBalance: { increment: invoice.total },
+          },
+        });
+        await tx.walletTransaction.create({
+          data: {
+            walletId: merchant.id,
+            amount: invoice.total,
+            type: 'FUNDING',
+            reference: `goods:${invoice.id}:credit`,
+            description: `Merchant settlement for invoice ${invoice.number}`,
+          },
+        });
+        await tx.goodsInvoice.update({
+          where: { id: invoice.id },
+          data: {
+            status: 'PAID',
+            paidAt: new Date(),
+            paymentMethod: 'wallet',
+            receiptNumber: `RCT-${randomUUID().toUpperCase()}`,
+            confirmationReference: `WALLET-${dto.requestId}`,
+          },
+        });
+        await this.event(
+          tx,
+          invoice,
+          'Wallet payment received. Your receipt is available on Whazzonline.',
+          userId,
+        );
+      }
+      await tx.commerceOrder.update({
+        where: { id: orderId },
+        data: { paymentMethod: 'wallet' },
+      });
+      await reconcileInvoicePayments(tx, orderId);
+      return { paid: true, orderId, total };
+    });
+    // Failed PIN attempts must commit before the error is returned.
+    if ('error' in result) throw new BadRequestException(result.error);
+    return result;
+  }
   private async transaction<T>(
     run: (tx: Prisma.TransactionClient) => Promise<T>,
   ): Promise<T> {
@@ -109,6 +306,7 @@ export class GoodsInvoicesService {
       id: invoice.id,
       number: invoice.number,
       orderId: invoice.orderId,
+      orderTotal: order.total,
       merchantId: invoice.vendorId,
       merchantName: invoice.vendorProfile.storeName,
       bank: invoice.bank,
@@ -127,7 +325,12 @@ export class GoodsInvoicesService {
       customerName: order.user
         ? [order.user.firstName, order.user.lastName].filter(Boolean).join(' ')
         : [order.guestFirstName, order.guestLastName].filter(Boolean).join(' '),
+      customerEmail: order.user?.email ?? order.guestEmail,
+      customerPhone: order.user?.phone ?? order.guestPhone,
+      merchantProfileId: invoice.vendorProfileId,
       deliveryAddress: order.deliveryAddress,
+      recipient: invoice.recipient,
+      deliveries: invoice.deliveries,
       items: order.items.filter((i) => i.vendorId === invoice.vendorId),
       reports: invoice.reports,
       isMerchant: access.userId === invoice.vendorId,
@@ -157,8 +360,29 @@ export class GoodsInvoicesService {
     const connected = await this.prisma.merchantPaymentConnection.count({
       where: { vendorProfileId: invoice.vendorProfileId, enabled: true },
     });
+    const orderInvoices = await this.prisma.goodsInvoice.findMany({
+      where: { orderId: invoice.orderId },
+      select: {
+        status: true,
+        total: true,
+        checkoutReference: true,
+        expiresAt: true,
+      },
+    });
+    const unpaid = orderInvoices.filter((i) => i.status !== 'PAID');
     return {
       ...result,
+      walletPaymentTotal: unpaid.reduce((sum, i) => sum + i.total, 0),
+      walletPaymentAvailable:
+        !!access.userId &&
+        access.userId === invoice.order.userId &&
+        unpaid.length > 0 &&
+        unpaid.every(
+          (i) =>
+            i.status === 'OPEN' &&
+            !i.checkoutReference &&
+            i.expiresAt > new Date(),
+        ),
       secureCheckoutAvailable: result.secureCheckoutAvailable && connected > 0,
     };
   }
@@ -314,6 +538,7 @@ export class GoodsInvoicesService {
     lines: InvoiceLine[];
     deliveryFee: number;
     conversationId?: string;
+    recipient?: Prisma.InputJsonValue;
   }) {
     if (!['bank', 'card', 'pay_on_delivery'].includes(input.paymentMethod))
       throw new BadRequestException(
@@ -484,13 +709,32 @@ export class GoodsInvoicesService {
         for (const product of products) {
           const variants = storedVariants(product.variants);
           if (!variants.length) continue;
-          for (const line of pricedLines.filter(l=>l.productId === product.id)) {
-            const index = variantIndex(variants,line.selectedVariants,line.selectedColor,line.selectedSize);
-            if (index < 0) throw new BadRequestException(`Choose an available option for ${product.name}.`);
-            if (variants[index].quantity < line.quantity) throw new BadRequestException(`The selected option for ${product.name} does not have enough stock.`);
-            variants[index] = {...variants[index],quantity:variants[index].quantity-line.quantity};
+          for (const line of pricedLines.filter(
+            (l) => l.productId === product.id,
+          )) {
+            const index = variantIndex(
+              variants,
+              line.selectedVariants,
+              line.selectedColor,
+              line.selectedSize,
+            );
+            if (index < 0)
+              throw new BadRequestException(
+                `Choose an available option for ${product.name}.`,
+              );
+            if (variants[index].quantity < line.quantity)
+              throw new BadRequestException(
+                `The selected option for ${product.name} does not have enough stock.`,
+              );
+            variants[index] = {
+              ...variants[index],
+              quantity: variants[index].quantity - line.quantity,
+            };
           }
-          await tx.product.update({where:{id:product.id},data:{variants:variants as Prisma.InputJsonValue}});
+          await tx.product.update({
+            where: { id: product.id },
+            data: { variants: variants as Prisma.InputJsonValue },
+          });
         }
         for (const [productId, quantity] of [...quantities].sort(([a], [b]) =>
           a.localeCompare(b),
@@ -560,6 +804,7 @@ export class GoodsInvoicesService {
               deliveryFee,
               total: merchantSubtotal + deliveryFee,
               paymentMethod: input.paymentMethod,
+              recipient: input.recipient,
               expiresAt: new Date(Date.now() + 7 * 86400000),
             },
           });
@@ -1226,7 +1471,11 @@ export class GoodsInvoicesService {
     vendorId: string,
     conversationId: string,
     dto: {
-      items: { productId: string; quantity: number }[];
+      items: {
+        productId: string;
+        quantity: number;
+        selectedVariants?: Record<string, string>;
+      }[];
       deliveryAddress: string;
       deliveryFee: number;
       requestId: string;
@@ -1263,14 +1512,14 @@ export class GoodsInvoicesService {
         vendorName: p.vendorProfile.storeName,
         name: p.name,
         subtitle: p.category,
-        imageUri: p.imageUrls[0] ?? '',
+        imageUri: variantImage(p, item.selectedVariants),
         sku: p.id,
         unitPrice: price,
         quantity: item.quantity,
         originalPrice: null,
         selectedColor: null,
         selectedSize: null,
-        selectedVariants: {},
+        selectedVariants: item.selectedVariants ?? {},
         deliveryAddress: dto.deliveryAddress,
       };
     });
@@ -1287,9 +1536,169 @@ export class GoodsInvoicesService {
   async catalog(vendorId: string) {
     return this.prisma.product.findMany({
       where: { vendorProfile: { userId: vendorId }, status: 'ACTIVE' },
-      select: { id: true, name: true, unitPrice: true, quantity: true },
-      take: 200,
+      select: {
+        id: true,
+        name: true,
+        category: true,
+        imageUrls: true,
+        variants: true,
+        unitPrice: true,
+        quantity: true,
+      },
       orderBy: { name: 'asc' },
     });
+  }
+
+  async createMerchantOrder(vendorId: string, dto: MerchantOrderInvoiceDto) {
+    const recipient = {
+      name: dto.buyer.name.trim(),
+      email: dto.buyer.email?.trim().toLowerCase(),
+      phone: dto.buyer.phone ? normalizePhone(dto.buyer.phone) : undefined,
+      userId: dto.buyer.userId,
+    };
+    if (dto.channels.includes('email') && !recipient.email)
+      throw new BadRequestException(
+        'Enter an email address for email delivery.',
+      );
+    if (dto.channels.includes('sms') && !recipient.phone)
+      throw new BadRequestException('Enter a phone number for SMS delivery.');
+    if (recipient.userId === vendorId)
+      throw new BadRequestException('Choose a buyer other than yourself.');
+    if (dto.conversationId) {
+      const buyer = await this.invoiceBuyer(vendorId, dto.conversationId);
+      if (buyer.userId !== recipient.userId)
+        throw new BadRequestException('Use the buyer from this conversation.');
+    }
+    if (
+      recipient.userId &&
+      !(await this.prisma.user.findFirst({
+        where: { id: recipient.userId, isActive: true },
+      }))
+    )
+      throw new BadRequestException(
+        'Buyer account not found. Check the account ID or leave it blank for a guest.',
+      );
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId: vendorId },
+    });
+    if (!profile?.setupCompleted)
+      throw new BadRequestException('Complete your merchant profile first.');
+    const key = `merchant:${vendorId}:${dto.requestId}`;
+    let receipt = await this.resume(
+      recipient.userId,
+      key,
+      dto.guestAccessToken,
+    );
+    if (!receipt) {
+      const products = await this.prisma.product.findMany({
+        where: {
+          id: { in: dto.items.map((i) => i.productId) },
+          vendorProfileId: profile.id,
+          status: 'ACTIVE',
+        },
+      });
+      const lines = dto.items.map((item) => {
+        const product = products.find((p) => p.id === item.productId);
+        if (!product)
+          throw new BadRequestException('Choose your own active products.');
+        const values = item.selectedVariants ?? {};
+        if (
+          Object.values(values).some(
+            (value) => typeof value !== 'string' || value.length > 100,
+          )
+        )
+          throw new BadRequestException('Choose valid product options.');
+        return {
+          productId: product.id,
+          vendorId,
+          vendorName: profile.storeName,
+          name: product.name,
+          subtitle: product.category,
+          imageUri: variantImage(product, values),
+          sku: product.id,
+          unitPrice: product.unitPrice,
+          quantity: item.quantity,
+          originalPrice: null,
+          selectedColor: null,
+          selectedSize: null,
+          selectedVariants: values,
+          deliveryAddress: dto.deliveryAddress,
+        };
+      });
+      const names = recipient.name.split(/\s+/);
+      receipt = await this.createCheckout({
+        userId: recipient.userId,
+        guest: recipient.userId
+          ? undefined
+          : {
+              firstName: names[0],
+              lastName: names.slice(1).join(' '),
+              email: recipient.email ?? '',
+              phone: recipient.phone ?? '',
+            },
+        guestAccessToken: dto.guestAccessToken,
+        idempotencyKey: key,
+        address: { label: dto.deliveryAddress, latitude: 0, longitude: 0 },
+        paymentMethod: 'bank',
+        lines,
+        deliveryFee: dto.deliveryFee,
+        conversationId: dto.conversationId,
+        recipient: JSON.parse(
+          JSON.stringify(recipient),
+        ) as Prisma.InputJsonValue,
+      });
+    }
+    const invoice = await this.prisma.goodsInvoice.findFirstOrThrow({
+      where: { orderId: receipt.id, vendorId },
+    });
+    // Deliver only the persisted recipient snapshot, even if the client retries with changed fields.
+    const saved = invoice.recipient as typeof recipient;
+    const base = (
+      process.env.FRONTEND_URL ?? 'https://whazzonline.com'
+    ).replace(/\/$/, '');
+    const link = `${base}/invoices/${invoice.id}${recipient.userId ? '' : `#token=${dto.guestAccessToken}`}`;
+    const deliveries = await deliverInvoice(
+      this.prisma,
+      invoice,
+      saved,
+      dto.channels,
+      link,
+    );
+    return {
+      ...receipt,
+      invoice: this.map(
+        await this.prisma.goodsInvoice.findUniqueOrThrow({
+          where: { id: invoice.id },
+          include: invoiceInclude,
+        }),
+        { userId: vendorId },
+      ),
+      deliveries,
+    };
+  }
+  async invoiceBuyer(vendorId: string, conversationId: string) {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, vendorProfile: { userId: vendorId } },
+      include: {
+        buyer: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+          },
+        },
+      },
+    });
+    if (!conversation) throw new NotFoundException('Conversation not found.');
+    return {
+      userId: conversation.buyer.id,
+      name: [conversation.buyer.firstName, conversation.buyer.lastName]
+        .filter(Boolean)
+        .join(' '),
+      email: conversation.buyer.email,
+      phone: conversation.buyer.phone,
+    };
   }
 }

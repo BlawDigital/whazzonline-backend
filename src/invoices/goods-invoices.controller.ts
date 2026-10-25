@@ -22,6 +22,7 @@ import {
 } from './goods-invoices.service';
 import {
   ChatInvoiceDto,
+  MerchantOrderInvoiceDto,
   CheckoutQuoteDto,
   ConfirmInvoiceDto,
   ConnectMerchantPaymentDto,
@@ -105,6 +106,18 @@ export class GoodsInvoicesController {
 @Controller('merchant-payments')
 export class MerchantPaymentsController {
   constructor(private readonly invoices: GoodsInvoicesService) {}
+  @Get('conversations/:id/invoice-buyer') @UseGuards(JwtAuthGuard) invoiceBuyer(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.invoices.invoiceBuyer(req.user.sub, id);
+  }
+  @Post('orders') @UseGuards(JwtAuthGuard) createOrder(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: MerchantOrderInvoiceDto,
+  ) {
+    return this.invoices.createMerchantOrder(req.user.sub, dto);
+  }
   @Get() @UseGuards(JwtAuthGuard) status(@Req() req: AuthenticatedRequest) {
     return this.invoices.connectionStatus(req.user.sub);
   }

@@ -6,6 +6,9 @@ import {
   Equals,
   IsArray,
   IsInt,
+  IsEmail,
+  IsIn,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
@@ -35,6 +38,7 @@ export class ConnectMerchantPaymentDto {
 class InvoiceProductDto {
   @IsUUID() productId!: string;
   @IsInt() @Min(1) @Max(10000) quantity!: number;
+  @IsOptional() @IsObject() selectedVariants?: Record<string, string>;
 }
 export class CheckoutQuoteDto {
   @IsArray()
@@ -56,4 +60,20 @@ export class ChatInvoiceDto {
   items!: InvoiceProductDto[];
   @IsString() @MinLength(3) @MaxLength(500) deliveryAddress!: string;
   @IsInt() @Min(0) @Max(10000000) deliveryFee!: number;
+}
+class InvoiceBuyerDto {
+  @IsString() @MinLength(2) @MaxLength(120) name!: string;
+  @IsOptional() @IsEmail() email?: string;
+  @IsOptional() @IsString() @MaxLength(30) phone?: string;
+  @IsOptional() @IsUUID() userId?: string;
+}
+export class MerchantOrderInvoiceDto extends ChatInvoiceDto {
+  @IsOptional() @IsUUID() conversationId?: string;
+  @ValidateNested() @Type(() => InvoiceBuyerDto) buyer!: InvoiceBuyerDto;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(2)
+  @IsIn(['sms', 'email'], { each: true })
+  channels!: ('sms' | 'email')[];
+  @Matches(/^[a-f0-9]{64}$/) guestAccessToken!: string;
 }
