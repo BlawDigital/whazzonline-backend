@@ -522,6 +522,76 @@ databaseTests('direct merchant invoice integration', () => {
       const jwt = module.get(JwtService),
         token = jwt.sign({ sub: buyer }),
         merchantToken = jwt.sign({ sub: vendor });
+      const evidence = Buffer.from('%PDF-1.4\ntransfer evidence\n%%EOF');
+      await request(app.getHttpServer())
+        .post(`/invoices/${id}/transfer-report`)
+        .auth(token, { type: 'bearer' })
+        .field('requestId', randomUUID())
+        .attach('evidence', Buffer.from('invalid'), {
+          filename: 'invalid.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`/invoices/${id}/transfer-report`)
+        .auth(token, { type: 'bearer' })
+        .send({ requestId: randomUUID() })
+        .expect(400);
+      const reportId = randomUUID();
+      const report = await request(app.getHttpServer())
+        .post(`/invoices/${id}/transfer-report`)
+        .auth(token, { type: 'bearer' })
+        .field('requestId', reportId)
+        .attach('evidence', evidence, {
+          filename: 'transfer.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(201);
+      expect(report.body.status).toBe('PAYMENT_REPORTED');
+      expect(report.body.reports[0].reference).toBe('');
+      const file = report.body.reports[0].evidence[0];
+      expect(file).toMatchObject({
+        name: 'transfer.pdf',
+        mime: 'application/pdf',
+      });
+      expect(file).not.toHaveProperty('content');
+      for (const allowed of [token, merchantToken]) {
+        const response = await request(app.getHttpServer())
+          .get(`/invoices/${id}/evidence/${file.id}`)
+          .auth(allowed, { type: 'bearer' })
+          .expect(200);
+        expect(response.body).toEqual(evidence);
+        expect(response.headers['cache-control']).toBe('private, no-store');
+      }
+      await request(app.getHttpServer())
+        .get(`/invoices/${id}/evidence/${file.id}`)
+        .auth(jwt.sign({ sub: otherVendor }), { type: 'bearer' })
+        .expect(404);
+      await request(app.getHttpServer())
+        .get(`/invoices/${id}/evidence/${randomUUID()}`)
+        .auth(token, { type: 'bearer' })
+        .expect(404);
+      await request(app.getHttpServer())
+        .post(`/invoices/${id}/transfer-report`)
+        .auth(token, { type: 'bearer' })
+        .field('requestId', reportId)
+        .attach('evidence', evidence, {
+          filename: 'transfer.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(201);
+      expect(
+        await prisma.invoiceTransferEvidence.count({
+          where: { report: { invoiceId: id } },
+        }),
+      ).toBe(1);
+      expect(
+        (
+          await prisma.commerceOrder.findUniqueOrThrow({
+            where: { id: batch.id },
+          })
+        ).paymentStatus,
+      ).not.toBe('paid');
       await request(app.getHttpServer()).get(`/invoices/${id}`).expect(404);
       await request(app.getHttpServer())
         .get(`/invoices/${id}`)
@@ -664,6 +734,29 @@ databaseTests('direct merchant invoice integration', () => {
       }),
     ).rejects.toThrow('locked');
   });
+  it('sets a first PIN without an OTP, hashes it, and requires verification for later changes', async () => {
+    const fresh = await prisma.user.create({
+      data: { email: 'fresh-pin@example.com', isActive: true },
+    });
+    const wallets = new WalletService(prisma);
+    const before = (global.fetch as jest.Mock).mock.calls.length;
+    await expect(wallets.setPin(fresh.id, { pin: '4826' })).resolves.toEqual({
+      configured: true,
+    });
+    expect((global.fetch as jest.Mock).mock.calls).toHaveLength(before);
+    const wallet = await prisma.wallet.findUniqueOrThrow({
+      where: { userId: fresh.id },
+    });
+    expect(await bcrypt.compare('4826', wallet.pinHash!)).toBe(true);
+    await expect(wallets.setPin(fresh.id, { pin: '1357' })).rejects.toThrow(
+      'Verify your account',
+    );
+    expect(await wallets.summary(fresh.id)).toMatchObject({
+      pinConfigured: true,
+      verificationChannels: ['email'],
+    });
+    expect(await wallets.summary(fresh.id)).not.toHaveProperty('pinHash');
+  });
   it('sets and recovers wallet PINs using a separate one-use contact challenge', async () => {
     const saved = {
       key: process.env.RESEND_API_KEY,
@@ -711,6 +804,60 @@ databaseTests('direct merchant invoice integration', () => {
       else process.env.RESEND_API_KEY = saved.key;
       if (saved.from === undefined) delete process.env.EMAIL_FROM;
       else process.env.EMAIL_FROM = saved.from;
+    }
+  });
+  it('sends phone PIN resets through SMS delivery and verifies before updating the PIN', async () => {
+    const saved = {
+      key: process.env.TERMII_API_KEY,
+      base: process.env.TERMII_BASE_URL,
+    };
+    try {
+      process.env.TERMII_API_KEY = 'test-key';
+      process.env.TERMII_BASE_URL = 'https://termii.example.test';
+      const user = await prisma.user.create({
+        data: { phone: '+2348123456789', isActive: true },
+      });
+      const wallets = new WalletService(prisma);
+      await wallets.setPin(user.id, { pin: '1234' });
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ pin_id: 'provider-challenge' }),
+      });
+      const challenge = await wallets.requestPin(user.id, 'phone');
+      const call = (global.fetch as jest.Mock).mock.calls.at(-1)!;
+      expect(call[0]).toBe('https://termii.example.test/api/sms/otp/send');
+      expect(JSON.parse(call[1].body)).toMatchObject({
+        to: '2348123456789',
+        pin_length: 6,
+        pin_placeholder: '<123456>',
+      });
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ verified: 'true' }),
+      });
+      await wallets.setPin(user.id, {
+        pin: '5678',
+        code: '123456',
+        challengeId: challenge.challengeId,
+      });
+      expect(
+        await bcrypt.compare(
+          '5678',
+          (
+            await prisma.wallet.findUniqueOrThrow({
+              where: { userId: user.id },
+            })
+          ).pinHash!,
+        ),
+      ).toBe(true);
+      expect((global.fetch as jest.Mock).mock.calls.at(-1)![0]).toBe(
+        'https://termii.example.test/api/sms/otp/verify',
+      );
+    } finally {
+      if (saved.key === undefined) delete process.env.TERMII_API_KEY;
+      else process.env.TERMII_API_KEY = saved.key;
+      if (saved.base === undefined) delete process.env.TERMII_BASE_URL;
+      else process.env.TERMII_BASE_URL = saved.base;
     }
   });
   it('creates merchant orders with variants, pending payment and honest delivery statuses; retries never duplicate', async () => {

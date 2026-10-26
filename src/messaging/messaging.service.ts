@@ -36,10 +36,38 @@ export class MessagingService {
   >();
 
   constructor(private readonly prisma: PrismaService) {}
+  async activity(userId: string) {
+    const [messages, pendingOrders] = await Promise.all([
+      this.prisma.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*) AS count FROM "ChatMessage" m
+        JOIN "Conversation" c ON c.id = m."conversationId"
+        JOIN "VendorProfile" v ON v.id = c."vendorProfileId"
+        WHERE m."senderUserId" <> ${userId}
+          AND ((c."buyerUserId" = ${userId} AND m."createdAt" > COALESCE(c."buyerLastReadAt", TIMESTAMP '1970-01-01'))
+            OR (v."userId" = ${userId} AND m."createdAt" > COALESCE(c."sellerLastReadAt", TIMESTAMP '1970-01-01')))
+      `,
+      this.prisma.commerceOrder.count({
+        where: {
+          items: { some: { vendorId: userId } },
+          paymentStatus: 'paid',
+          status: { notIn: ['rejected', 'cancelled'] },
+          OR: [
+            { fulfillments: { some: { vendorId: userId, status: 'pending' } } },
+            {
+              fulfillments: { none: { vendorId: userId } },
+              status: { in: ['confirmed', 'pending'] },
+            },
+          ],
+        },
+      }),
+    ]);
+    return { unreadChats: Number(messages[0]?.count ?? 0), pendingOrders };
+  }
   private label(value: Date) {
     return new Intl.DateTimeFormat('en-NG', {
       hour: 'numeric',
       minute: '2-digit',
+      hour12: true,
     }).format(value);
   }
   private participant(userId: string, id?: string) {
@@ -58,6 +86,11 @@ export class MessagingService {
 
   async assertParticipant(userId: string, id: string) {
     await this.requireParticipant(userId, id);
+  }
+  async favorite(userId: string, id: string, favorite: boolean) {
+    const conversation = await this.requireParticipant(userId,id);
+    await this.prisma.conversation.update({where:{id},data:conversation.buyerUserId === userId ? {buyerFavorite:favorite} : {sellerFavorite:favorite}});
+    return {favorite};
   }
 
   private pruneTyping(conversationId?: string) {
@@ -143,7 +176,7 @@ export class MessagingService {
         (seller
           ? conversation.buyer.avatarUrl
           : conversation.vendorProfile.logoUrl) ?? undefined,
-      favorite: conversation.favorite,
+      favorite: seller ? conversation.sellerFavorite : conversation.buyerFavorite,
       id: conversation.id,
       status: conversation.status.toLowerCase(),
       subject: conversation.subject ?? undefined,

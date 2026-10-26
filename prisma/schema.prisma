@@ -294,6 +294,7 @@ model VendorProfile {
   landmark           String?
   description        String
   about              String?
+  storefrontDetails  Json               @default("{}")
   socialLinks        Json               @default("[]")
   representativeName String?
   representativeRole String?
@@ -478,6 +479,8 @@ model Conversation {
   vendorProfileId  String
   vendorProfile    VendorProfile      @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
   favorite         Boolean            @default(false)
+  buyerFavorite    Boolean            @default(false)
+  sellerFavorite   Boolean            @default(false)
   buyerLastReadAt  DateTime?
   sellerLastReadAt DateTime?
   clientThreadId   String?            @unique
@@ -926,6 +929,7 @@ model InvoiceDelivery {
 }
 
 model InvoiceTransferReport {
+  evidence InvoiceTransferEvidence[]
   id         String       @id @default(uuid())
   invoiceId  String
   invoice    GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
@@ -939,6 +943,16 @@ model InvoiceTransferReport {
 
   @@unique([invoiceId, requestId])
   @@index([invoiceId, status])
+}
+
+model InvoiceTransferEvidence {
+  id String @id @default(uuid())
+  reportId String
+  report InvoiceTransferReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  name String
+  mime String
+  content Bytes
+  @@index([reportId])
 }
 
 //comments

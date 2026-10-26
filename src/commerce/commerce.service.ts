@@ -16,12 +16,16 @@ import { ReportOrderIssueDto } from './dto/report-order-issue.dto';
 import { GuestCheckoutDto } from './dto/guest-checkout.dto';
 import { lockOrder } from './fulfillment';
 import { normalizeOrderStatus } from './order-status';
+import { BUYER_RECEIPT_REASON, buyerReceiptDate } from './buyer-receipt';
 
 // Delivery charges will now need to be agreed on the merchant invoice side; no platform shipping charge for now.
 const DELIVERY_FEE = 0;
 
 function sameVariants(left: unknown, right: unknown) {
-  const sorted = (value: unknown) => value && typeof value === 'object' ? Object.entries(value).sort(([a],[b])=>a.localeCompare(b)) : [];
+  const sorted = (value: unknown) =>
+    value && typeof value === 'object'
+      ? Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+      : [];
   return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
 }
 
@@ -108,9 +112,20 @@ export class CommerceService {
     issues: { id: string }[];
     returnRequests: { id: string }[];
     trustReviews: { vendorProfile: { userId: string } }[];
+    fulfillments?: {
+      vendorId: string;
+      status: string;
+      history: { createdAt: Date }[];
+    }[];
   }) {
     return {
       completedAt: order.completedAt?.toISOString(),
+      buyerConfirmedAt: buyerReceiptDate(order.fulfillments ?? []),
+      reviewableVendorIds: order.fulfillments?.length
+        ? order.fulfillments
+            .filter((row) => normalizeOrderStatus(row.status) !== 'rejected')
+            .map((row) => row.vendorId)
+        : [...new Set(order.items.map((item) => item.vendorId))],
       createdAt: order.createdAt.toISOString(),
       deliveryAddress: order.deliveryAddress,
       id: order.id,
@@ -160,6 +175,18 @@ export class CommerceService {
           trustReviews: {
             select: { vendorProfile: { select: { userId: true } } },
           },
+          fulfillments: {
+            select: {
+              vendorId: true,
+              status: true,
+              history: {
+                where: { actorUserId: userId, reason: BUYER_RECEIPT_REASON },
+                select: { createdAt: true },
+                orderBy: { createdAt: 'asc' },
+                take: 1,
+              },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -206,7 +233,12 @@ export class CommerceService {
     const unitPrice = promoPrice ?? product.unitPrice;
     const data = {
       deliveryAddress: dto.deliveryAddress,
-      imageUri: variantImage(product, dto.selectedVariants, dto.selectedColor, dto.selectedSize),
+      imageUri: variantImage(
+        product,
+        dto.selectedVariants,
+        dto.selectedColor,
+        dto.selectedSize,
+      ),
       name: product.name,
       originalPrice: promoPrice ? product.unitPrice : null,
       productId: product.id,
@@ -340,7 +372,12 @@ export class CommerceService {
       return {
         sourceCartItemId: cartItem.id,
         deliveryAddress: dto.address.label,
-        imageUri: variantImage(product, cartItem.selectedVariants, cartItem.selectedColor, cartItem.selectedSize),
+        imageUri: variantImage(
+          product,
+          cartItem.selectedVariants,
+          cartItem.selectedColor,
+          cartItem.selectedSize,
+        ),
         name: product.name,
         originalPrice: promoPrice ? product.unitPrice : null,
         productId: product.id,
@@ -412,17 +449,15 @@ export class CommerceService {
       await lockOrder(tx, id);
       const order = await tx.commerceOrder.findFirst({
         where: { id, userId },
+        include: { items: { select: { vendorId: true } } },
       });
       if (!order) throw new NotFoundException('Order not found.');
       if (order.paymentStatus !== 'paid')
         throw new BadRequestException(
           'Payment must be confirmed before completing the order.',
         );
-      if (order.status === 'delivered' && order.completedAt) {
-        return { completedAt: order.completedAt.toISOString(), id };
-      }
       if (
-        !['processing', 'ready', 'out_for_delivery'].includes(
+        !['processing', 'ready', 'out_for_delivery', 'delivered'].includes(
           normalizeOrderStatus(order.status),
         )
       ) {
@@ -430,15 +465,63 @@ export class CommerceService {
           'Only an accepted order can be confirmed as delivered.',
         );
       }
-      const completedAt = new Date();
+      const completedAt = order.completedAt ?? new Date();
       const fulfillments = await tx.sellerFulfillment.findMany({
         where: { orderId: id },
+        include: {
+          history: {
+            where: { actorUserId: userId, reason: BUYER_RECEIPT_REASON },
+            orderBy: { createdAt: 'asc' },
+            take: 1,
+          },
+        },
       });
+      const confirmed = buyerReceiptDate(fulfillments);
+      if (
+        confirmed &&
+        order.items.every((item) =>
+          fulfillments.some((row) => row.vendorId === item.vendorId),
+        )
+      )
+        return {
+          id,
+          completedAt: completedAt.toISOString(),
+          buyerConfirmedAt: confirmed,
+        };
+      const confirmedAt = new Date();
+      for (const vendorId of new Set(
+        order.items.map((item) => item.vendorId),
+      )) {
+        if (fulfillments.some((row) => row.vendorId === vendorId)) continue;
+        fulfillments.push(
+          await tx.sellerFulfillment.create({
+            data: {
+              orderId: id,
+              vendorId,
+              status: 'delivered',
+              history: {
+                create: {
+                  status: 'delivered',
+                  actorUserId: userId,
+                  reason: BUYER_RECEIPT_REASON,
+                  createdAt: confirmedAt,
+                },
+              },
+            },
+            include: {
+              history: {
+                where: { actorUserId: userId, reason: BUYER_RECEIPT_REASON },
+                orderBy: { createdAt: 'asc' },
+                take: 1,
+              },
+            },
+          }),
+        );
+      }
       for (const fulfillment of fulfillments) {
         if (
-          ['rejected', 'delivered'].includes(
-            normalizeOrderStatus(fulfillment.status),
-          )
+          normalizeOrderStatus(fulfillment.status) === 'rejected' ||
+          fulfillment.history.length
         )
           continue;
         await tx.sellerFulfillment.update({
@@ -449,7 +532,8 @@ export class CommerceService {
               create: {
                 status: 'delivered',
                 actorUserId: userId,
-                reason: 'Buyer confirmed receipt',
+                reason: BUYER_RECEIPT_REASON,
+                createdAt: confirmedAt,
               },
             },
           },
@@ -459,7 +543,11 @@ export class CommerceService {
         where: { id },
         data: { completedAt, status: 'delivered' },
       });
-      return { completedAt: completedAt.toISOString(), id };
+      return {
+        completedAt: completedAt.toISOString(),
+        buyerConfirmedAt: confirmedAt.toISOString(),
+        id,
+      };
     });
   }
 
@@ -625,8 +713,14 @@ export class CommerceService {
     );
     if (resumed) return resumed;
     const requestedIds = dto.items.map((item) => item.productId);
-    const selectionKeys=dto.items.map(item=>`${item.productId}:${item.selectedColor ?? ''}:${item.selectedSize ?? ''}:${JSON.stringify(Object.entries(item.selectedVariants ?? {}).sort(([a],[b])=>a.localeCompare(b)))}`);
-    if(new Set(selectionKeys).size !== selectionKeys.length) throw new BadRequestException('A product option was submitted more than once');
+    const selectionKeys = dto.items.map(
+      (item) =>
+        `${item.productId}:${item.selectedColor ?? ''}:${item.selectedSize ?? ''}:${JSON.stringify(Object.entries(item.selectedVariants ?? {}).sort(([a], [b]) => a.localeCompare(b)))}`,
+    );
+    if (new Set(selectionKeys).size !== selectionKeys.length)
+      throw new BadRequestException(
+        'A product option was submitted more than once',
+      );
     const products = await this.prisma.product.findMany({
       where: { id: { in: requestedIds } },
       include: {
@@ -670,7 +764,12 @@ export class CommerceService {
 
       return {
         deliveryAddress: dto.address.label,
-        imageUri: variantImage(product, requested.selectedVariants, requested.selectedColor, requested.selectedSize),
+        imageUri: variantImage(
+          product,
+          requested.selectedVariants,
+          requested.selectedColor,
+          requested.selectedSize,
+        ),
         name: product.name,
         originalPrice: promoPrice ? product.unitPrice : null,
         productId: product.id,

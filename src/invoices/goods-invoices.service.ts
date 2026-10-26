@@ -64,7 +64,10 @@ const invoiceInclude = {
     },
   },
   vendorProfile: { select: { storeName: true, userId: true } },
-  reports: { orderBy: { createdAt: 'desc' as const } },
+  reports: {
+    orderBy: { createdAt: 'desc' as const },
+    include: { evidence: { select: { id: true, name: true, mime: true } } },
+  },
   deliveries: true,
 } satisfies Prisma.GoodsInvoiceInclude;
 type InvoiceRecord = Prisma.GoodsInvoiceGetPayload<{
@@ -118,14 +121,16 @@ export class GoodsInvoicesService {
       if (
         order.invoices.length &&
         order.invoices.every((i) => i.status === 'PAID')
-        ) {
-          const debit = await tx.walletTransaction.findUnique({
-            where: { reference: `goods:${orderId}:debit` },
-          });
-          if (!debit)
-            throw new BadRequestException('This order has already been paid using another payment method.');
-          return { paid: true, orderId, total: Math.abs(debit.amount) };
-        }
+      ) {
+        const debit = await tx.walletTransaction.findUnique({
+          where: { reference: `goods:${orderId}:debit` },
+        });
+        if (!debit)
+          throw new BadRequestException(
+            'This order has already been paid using another payment method.',
+          );
+        return { paid: true, orderId, total: Math.abs(debit.amount) };
+      }
       const unpaid = order.invoices.filter((i) => i.status !== 'PAID');
       if (
         !unpaid.length ||
@@ -898,7 +903,8 @@ export class GoodsInvoicesService {
   async report(
     id: string,
     access: InvoiceAccess,
-    dto: { requestId: string; reference: string; note?: string },
+    dto: { requestId: string; reference?: string; note?: string },
+    evidence: { name: string; mime: string; content: Buffer }[] = [],
   ) {
     const invoice = await this.prisma.goodsInvoice.findUnique({
       where: { id },
@@ -909,6 +915,10 @@ export class GoodsInvoicesService {
     await this.get(id, access);
     if (access.userId === invoice.vendorId)
       throw new ForbiddenException('Only the buyer can report their transfer.');
+    if (!dto.reference?.trim() && !evidence.length)
+      throw new BadRequestException(
+        'Attach transfer evidence or enter a transaction reference.',
+      );
     await this.transaction(async (tx) => {
       await lockOrder(tx, invoice.orderId);
       const current = await tx.goodsInvoice.findUniqueOrThrow({
@@ -945,8 +955,14 @@ export class GoodsInvoicesService {
         create: {
           invoiceId: id,
           requestId: dto.requestId,
-          reference: dto.reference.trim(),
+          reference: dto.reference?.trim() ?? '',
           note: dto.note?.trim(),
+          evidence: {
+            create: evidence.map((file) => ({
+              ...file,
+              content: Uint8Array.from(file.content),
+            })),
+          },
         },
         update: {},
       });
@@ -962,6 +978,23 @@ export class GoodsInvoicesService {
       );
     });
     return this.get(id, access);
+  }
+  async transferEvidence(
+    id: string,
+    evidenceId: string,
+    access: InvoiceAccess,
+  ) {
+    const invoice = await this.prisma.goodsInvoice.findUnique({
+      where: { id },
+      include: invoiceInclude,
+    });
+    if (!invoice) throw new NotFoundException('Invoice not found.');
+    this.assertAccess(invoice, access);
+    const evidence = await this.prisma.invoiceTransferEvidence.findFirst({
+      where: { id: evidenceId, report: { invoiceId: id } },
+    });
+    if (!evidence) throw new NotFoundException('Evidence not found.');
+    return evidence;
   }
   private async event(
     tx: Prisma.TransactionClient,

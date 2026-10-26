@@ -1,10 +1,10 @@
-import { IsIn, IsInt, IsUUID, Matches, Min } from 'class-validator';
+import { IsIn, IsInt, IsUUID, IsOptional, Matches, Min } from 'class-validator';
 export class WalletChallengeDto {
   @IsIn(['email', 'phone']) channel!: 'email' | 'phone';
 }
 export class WalletPinDto {
-  @IsUUID() challengeId!: string;
-  @Matches(/^\d{6}$/) code!: string;
+  @IsOptional() @IsUUID() challengeId?: string;
+  @IsOptional() @Matches(/^\d{6}$/) code?: string;
   @Matches(/^\d{4}$/) pin!: string;
 }
 export class WalletPaymentDto {

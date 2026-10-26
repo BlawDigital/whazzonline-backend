@@ -10,7 +10,15 @@ import {
   Req,
   UnauthorizedException,
   UseGuards,
+  Res,
+  UploadedFiles,
+  UseInterceptors,
+  BadRequestException,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { validFileSignature } from '../storage/cloudinary-storage';
+import type { Response } from 'express';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import { JwtService } from '@nestjs/jwt';
@@ -63,12 +71,63 @@ export class GoodsInvoicesController {
   @Get(':id') async get(@Param('id') id: string, @Req() req: Request) {
     return this.invoices.get(id, await this.access(req));
   }
-  @Post(':id/transfer-report') async report(
+  @Post(':id/transfer-report')
+  @UseInterceptors(
+    FilesInterceptor('evidence', 3, {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024, files: 3 },
+      fileFilter: (_req, file, callback) =>
+        callback(
+          ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(
+            file.mimetype,
+          )
+            ? null
+            : new BadRequestException('Choose a PNG, JPEG, WebP or PDF file.'),
+          true,
+        ),
+    }),
+  )
+  async report(
     @Param('id') id: string,
     @Req() req: Request,
     @Body() dto: TransferReportDto,
+    @UploadedFiles() files?: Express.Multer.File[],
   ) {
-    return this.invoices.report(id, await this.access(req), dto);
+    const access = await this.access(req);
+    if (files?.some((file) => !validFileSignature(file.buffer, file.mimetype)))
+      throw new BadRequestException(
+        'File content does not match its image or document type.',
+      );
+    return this.invoices.report(
+      id,
+      access,
+      dto,
+      (files ?? []).map((file) => ({
+        name: file.originalname.replace(/[\\/\r\n]/g, '_').slice(0, 180),
+        mime: file.mimetype,
+        content: file.buffer,
+      })),
+    );
+  }
+  @Get(':id/evidence/:evidenceId') async evidence(
+    @Param('id') id: string,
+    @Param('evidenceId') evidenceId: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const file = await this.invoices.transferEvidence(
+      id,
+      evidenceId,
+      await this.access(req),
+    );
+    res.setHeader('Content-Type', file.mime);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(Buffer.from(file.content));
   }
   @Post(':id/secure-checkout') async checkout(
     @Param('id') id: string,

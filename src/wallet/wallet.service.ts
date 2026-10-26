@@ -34,6 +34,10 @@ export class WalletService {
 
   async summary(userId: string) {
     const wallet = await this.getWallet(userId);
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { email: true, phone: true },
+    });
     return {
       accountName: wallet.accountName,
       accountNumber: wallet.accountNumber,
@@ -42,6 +46,10 @@ export class WalletService {
       mainBalance: wallet.mainBalance,
       referralBonus: wallet.referralBonus,
       pinConfigured: !!wallet.pinHash,
+      verificationChannels: [
+        ...(user.email ? ['email'] : []),
+        ...(user.phone ? ['phone'] : []),
+      ],
       pinLockedUntil: wallet.pinLockedUntil,
     };
   }
@@ -107,7 +115,7 @@ export class WalletService {
         if (!process.env.TERMII_API_KEY || !process.env.TERMII_BASE_URL)
           throw new Error('unconfigured');
         const result = await fetch(
-          `${process.env.TERMII_BASE_URL.replace(/\/+$/, '')}/api/sms/otp/generate`,
+          `${process.env.TERMII_BASE_URL.replace(/\/+$/, '')}/api/sms/otp/send`,
           {
             method: 'POST',
             signal: AbortSignal.timeout(12000),
@@ -115,18 +123,28 @@ export class WalletService {
             body: JSON.stringify({
               api_key: process.env.TERMII_API_KEY,
               pin_type: 'NUMERIC',
-              phone_number: destination.replace(/^\+/, ''),
+              message_type: 'NUMERIC',
+              to: destination.replace(/^\+/, ''),
+              from: process.env.TERMII_SENDER_ID?.trim() || 'N-Alert',
+              channel: process.env.TERMII_CHANNEL?.trim() || 'generic',
+              pin_placeholder: '<123456>',
+              message_text:
+                'Your Whazzonline wallet PIN verification code is <123456>. It expires in 10 minutes. Never share this code.',
               pin_attempts: 5,
               pin_time_to_live: 10,
               pin_length: 6,
             }),
           },
         );
-        const data = (await result.json()) as { pin_id?: string };
-        if (!result.ok || !data.pin_id) throw new Error('provider');
+        const data = (await result.json()) as {
+          pin_id?: string;
+          pinId?: string;
+        };
+        const providerId = data.pin_id || data.pinId;
+        if (!result.ok || !providerId) throw new Error('provider');
         await this.prisma.walletPinChallenge.update({
           where: { id: challenge.id },
-          data: { providerId: data.pin_id },
+          data: { providerId },
         });
       }
     } catch {
@@ -150,8 +168,25 @@ export class WalletService {
 
   async setPin(
     userId: string,
-    dto: { challengeId: string; code: string; pin: string },
+    dto: { challengeId?: string; code?: string; pin: string },
   ) {
+    const wallet = await this.getWallet(userId);
+    if (!wallet.pinHash && !dto.challengeId && !dto.code) {
+      const pinHash = await bcrypt.hash(dto.pin, 12);
+      const created = await this.prisma.wallet.updateMany({
+        where: { userId, pinHash: null },
+        data: { pinHash, pinAttempts: 0, pinLockedUntil: null },
+      });
+      if (!created.count)
+        throw new BadRequestException(
+          'A PIN is already configured. Verify your account to change it.',
+        );
+      return { configured: true };
+    }
+    if (!dto.challengeId || !dto.code)
+      throw new BadRequestException(
+        'Verify your account to change your wallet PIN.',
+      );
     const challenge = await this.prisma.walletPinChallenge.findFirst({
       where: {
         id: dto.challengeId,

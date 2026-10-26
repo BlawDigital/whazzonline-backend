@@ -21,7 +21,7 @@ import {
 } from 'class-validator';
 export class TransferReportDto {
   @IsUUID() requestId!: string;
-  @IsString() @MinLength(2) @MaxLength(120) reference!: string;
+  @IsOptional() @IsString() @MaxLength(120) reference?: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 export class ConfirmInvoiceDto {

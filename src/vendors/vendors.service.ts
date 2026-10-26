@@ -421,7 +421,15 @@ export class VendorsService {
           'A variant points to a product image that was not uploaded.',
         );
       }
-      return { color, imageIndexes, quantity: variant.quantity, size, type, ...(variant.colorHex ? {colorHex:variant.colorHex} : {}), ...(Object.keys(options).length ? {options} : {}) };
+      return {
+        color,
+        imageIndexes,
+        quantity: variant.quantity,
+        size,
+        type,
+        ...(variant.colorHex ? { colorHex: variant.colorHex } : {}),
+        ...(Object.keys(options).length ? { options } : {}),
+      };
     });
     const variantQuantity = normalizedVariants.reduce(
       (total, variant) => total + variant.quantity,
@@ -837,7 +845,12 @@ export class VendorsService {
       );
     const variants = dto.variants?.map((v) => {
       const options = normalizeSpecifications(v.options ?? {});
-      if (!v.type?.trim() && !v.color?.trim() && !v.size?.trim() && !Object.keys(options).length)
+      if (
+        !v.type?.trim() &&
+        !v.color?.trim() &&
+        !v.size?.trim() &&
+        !Object.keys(options).length
+      )
         throw new BadRequestException(
           'Each variant needs a name, color, or size.',
         );
@@ -847,8 +860,8 @@ export class VendorsService {
         type: normalizeOptionalVariant(v.type),
         color: normalizeOptionalVariant(v.color),
         size: normalizeOptionalVariant(v.size),
-        ...(v.colorHex ? {colorHex:v.colorHex} : {}),
-        ...(Object.keys(options).length ? {options} : {}),
+        ...(v.colorHex ? { colorHex: v.colorHex } : {}),
+        ...(Object.keys(options).length ? { options } : {}),
         quantity: v.quantity,
         imageIndexes: v.imageIndexes,
       };
@@ -944,6 +957,16 @@ export class VendorsService {
       where: { userId },
       data: {
         ...dto,
+        storefrontDetails: dto.storefrontDetails
+          ? {
+              ...dto.storefrontDetails,
+              businessHours:
+                dto.storefrontDetails.businessHours?.map((row) => ({
+                  label: row.label.trim(),
+                  value: row.value.trim(),
+                })) ?? [],
+            }
+          : undefined,
         socialLinks: dto.socialLinks?.map((link) => ({
           label: link.label.trim(),
           url: link.url,
@@ -1007,10 +1030,14 @@ export class VendorsService {
       where: { userId },
       data: {
         ...uploads,
-        reviewStatus: 'DRAFT',
-        setupCompleted: false,
-        submittedAt: null,
-        termsAcceptedAt: null,
+        ...(uploads.cacUrl || !existing.setupCompleted
+          ? {
+              reviewStatus: 'DRAFT',
+              setupCompleted: false,
+              submittedAt: null,
+              termsAcceptedAt: null,
+            }
+          : {}),
       },
     });
 
