@@ -4,6 +4,7 @@ import {
   AdminSupportController,
   PublicSupportController,
   SellerSupportController,
+  UserSupportController,
 } from './support.controller';
 import { SupportService } from './support.service';
 
@@ -12,6 +13,7 @@ import { SupportService } from './support.service';
     SellerSupportController,
     AdminSupportController,
     PublicSupportController,
+    UserSupportController,
   ],
   providers: [SupportService],
 })

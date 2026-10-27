@@ -40,6 +40,26 @@ export class CreateSupportTicketDto extends SupportMessageDto {
   orderId?: string;
 }
 
+export class AppFeedbackDto {
+  @IsUUID()
+  requestId!: string;
+
+  @IsIn(['app_issue', 'feature_request'])
+  category!: 'app_issue' | 'feature_request';
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(3)
+  @MaxLength(160)
+  subject!: string;
+
+  @Transform(trim)
+  @IsString()
+  @MinLength(10)
+  @MaxLength(4000)
+  text!: string;
+}
+
 export class SupportListDto {
   @IsOptional()
   @Type(() => Number)

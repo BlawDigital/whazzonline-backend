@@ -17,6 +17,7 @@ import type { AuthenticatedRequest } from '../auth/guards/authenticated-request'
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import {
   CreateSupportTicketDto,
+  AppFeedbackDto,
   SupportListDto,
   SupportMessageDto,
   SupportStatusDto,
@@ -105,6 +106,57 @@ export class SellerSupportController extends SupportControllerBase {
     @Body() dto: CreateSupportTicketDto,
   ) {
     return this.support.create(request.user.sub, dto);
+  }
+
+  @Get('tickets/:ticketId')
+  ticket(
+    @Req() request: AuthenticatedRequest,
+    @Param('ticketId') ticketId: string,
+  ) {
+    return this.detail(request, ticketId);
+  }
+
+  @Post('tickets/:ticketId/messages')
+  @UseInterceptors(FilesInterceptor('attachments', 3, supportUploadOptions))
+  message(
+    @Req() request: AuthenticatedRequest,
+    @Param('ticketId') ticketId: string,
+    @Body() dto: SupportMessageDto,
+    @UploadedFiles() files: Express.Multer.File[] = [],
+  ) {
+    return this.send(request, ticketId, dto, files);
+  }
+
+  @Get('tickets/:ticketId/messages/:messageId/attachments/:attachmentId')
+  file(
+    @Req() request: AuthenticatedRequest,
+    @Param('ticketId') ticketId: string,
+    @Param('messageId') messageId: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.attachment(request, ticketId, messageId, attachmentId);
+  }
+}
+
+@Controller('support')
+@UseGuards(JwtAuthGuard)
+export class UserSupportController extends SupportControllerBase {
+  protected readonly audience = 'user' as const;
+  constructor(support: SupportService) {
+    super(support);
+  }
+
+  @Post('tickets')
+  create(@Req() request: AuthenticatedRequest, @Body() dto: AppFeedbackDto) {
+    return this.support.feedback(request.user.sub, dto);
+  }
+
+  @Get('tickets')
+  tickets(
+    @Req() request: AuthenticatedRequest,
+    @Query() query: SupportListDto,
+  ) {
+    return this.list(request, query);
   }
 
   @Get('tickets/:ticketId')

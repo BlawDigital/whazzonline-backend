@@ -80,6 +80,7 @@ model User {
   notificationSettings SellerNotificationSettings?
   vendorProfile        VendorProfile?
   wallet               Wallet?
+  walletPinChallenges  WalletPinChallenge[]
   referrals            Referral[]                  @relation("Referrer")
   cartItems            CommerceCartItem[]
   orders               CommerceOrder[]
@@ -139,7 +140,26 @@ model Wallet {
   accountName      String?
   accountNumber    String?             @unique
   bankName         String?
+  pinHash          String?
+  pinAttempts      Int                 @default(0)
+  pinLockedUntil   DateTime?
   transactions     WalletTransaction[]
+}
+
+model WalletPinChallenge {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel     String
+  destination String
+  codeHash    String?
+  providerId  String?
+  attempts    Int      @default(0)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model WalletTransaction {
@@ -149,6 +169,7 @@ model WalletTransaction {
   wallet         Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
   amount         Int
   description    String
+  reference      String?                 @unique
   type           WalletTransactionType
   status         WalletTransactionStatus @default(COMPLETED)
   referralReward ReferralReward?
@@ -273,6 +294,7 @@ model VendorProfile {
   landmark           String?
   description        String
   about              String?
+  storefrontDetails  Json               @default("{}")
   socialLinks        Json               @default("[]")
   representativeName String?
   representativeRole String?
@@ -457,6 +479,8 @@ model Conversation {
   vendorProfileId  String
   vendorProfile    VendorProfile      @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
   favorite         Boolean            @default(false)
+  buyerFavorite    Boolean            @default(false)
+  sellerFavorite   Boolean            @default(false)
   buyerLastReadAt  DateTime?
   sellerLastReadAt DateTime?
   clientThreadId   String?            @unique
@@ -883,13 +907,29 @@ model GoodsInvoice {
   connection            MerchantPaymentConnection? @relation(fields: [connectionId], references: [id], onDelete: Restrict)
   messages              ChatMessage[]
   reports               InvoiceTransferReport[]
+  recipient             Json?
+  deliveries            InvoiceDelivery[]
 
   @@unique([orderId, vendorId])
   @@index([vendorId, status, createdAt])
   @@index([status, expiresAt])
 }
 
+model InvoiceDelivery {
+  id            String       @id @default(uuid())
+  invoiceId     String
+  invoice       GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  channel       String
+  destination   String
+  status        String       @default("PENDING")
+  attemptedAt   DateTime?
+  sentAt        DateTime?
+
+  @@unique([invoiceId, channel])
+}
+
 model InvoiceTransferReport {
+  evidence InvoiceTransferEvidence[]
   id         String       @id @default(uuid())
   invoiceId  String
   invoice    GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
@@ -903,6 +943,16 @@ model InvoiceTransferReport {
 
   @@unique([invoiceId, requestId])
   @@index([invoiceId, status])
+}
+
+model InvoiceTransferEvidence {
+  id String @id @default(uuid())
+  reportId String
+  report InvoiceTransferReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  name String
+  mime String
+  content Bytes
+  @@index([reportId])
 }
 
 //comments

@@ -58,6 +58,58 @@ describe('CommerceService trust reviews', () => {
       service.completeOrder('buyer', 'unpaid-order'),
     ).rejects.toThrow('Payment must be confirmed');
   });
+  it('persists buyer confirmation after merchant delivery and does not duplicate it on retry', async () => {
+    const delivered = new Date('2026-10-25T10:00:00Z');
+    prisma.commerceOrder.findFirst.mockResolvedValue({
+      id: 'order',
+      userId: 'buyer',
+      status: 'delivered',
+      paymentStatus: 'paid',
+      completedAt: delivered,
+      items: [{ vendorId: 'vendor' }],
+    });
+    prisma.sellerFulfillment.findMany.mockResolvedValue([
+      {
+        id: 'fulfillment',
+        vendorId: 'vendor',
+        status: 'delivered',
+        history: [],
+      },
+    ]);
+    const receipt = await service.completeOrder('buyer', 'order');
+    expect(receipt.completedAt).toBe(delivered.toISOString());
+    expect(receipt.buyerConfirmedAt).toBeTruthy();
+    expect(prisma.sellerFulfillment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          status: 'delivered',
+          history: {
+            create: {
+              status: 'delivered',
+              actorUserId: 'buyer',
+              reason: 'Buyer confirmed receipt',
+              createdAt: new Date(receipt.buyerConfirmedAt),
+            },
+          },
+        },
+      }),
+    );
+    expect(prisma.commerceOrder.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'order', userId: 'buyer' } }),
+    );
+    prisma.sellerFulfillment.findMany.mockResolvedValue([
+      {
+        id: 'fulfillment',
+        vendorId: 'vendor',
+        status: 'delivered',
+        history: [{ createdAt: new Date(receipt.buyerConfirmedAt) }],
+      },
+    ]);
+    const retry = await service.completeOrder('buyer', 'order');
+    expect(retry).toEqual(receipt);
+    expect(prisma.sellerFulfillment.update).toHaveBeenCalledTimes(1);
+    expect(prisma.commerceOrder.update).toHaveBeenCalledTimes(1);
+  });
   it('does not expose database-only fields in order item responses', async () => {
     prisma.commerceCartItem.findMany.mockResolvedValue([]);
     prisma.commerceOrder.findMany.mockResolvedValue([

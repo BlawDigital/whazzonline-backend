@@ -9,6 +9,8 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  IsEmail,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -19,7 +21,34 @@ export class MerchantLinkDto {
   url!: string;
 }
 
+export class StoreBusinessHourDto {
+  @IsString() @MinLength(1) @MaxLength(60) label!: string;
+  @IsString() @MinLength(1) @MaxLength(80) value!: string;
+}
+export class StorefrontDetailsDto {
+  @IsOptional() @IsString() @MaxLength(160) heading?: string;
+  @IsOptional() @IsString() @MaxLength(120) representativeTitle?: string;
+  @IsOptional() @IsString() @MaxLength(40) phone?: string;
+  @IsOptional()
+  @IsString()
+  @MaxLength(254)
+  @ValidateIf((_object: unknown, value: unknown) => value !== '')
+  @IsEmail()
+  email?: string;
+  @IsOptional() @IsString() @MaxLength(80) handle?: string;
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(14)
+  @ValidateNested({ each: true })
+  @Type(() => StoreBusinessHourDto)
+  businessHours?: StoreBusinessHourDto[];
+}
+
 export class UpdateStorefrontContentDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => StorefrontDetailsDto)
+  storefrontDetails?: StorefrontDetailsDto;
   @IsOptional() @IsString() @MaxLength(10000) about?: string;
   @IsOptional()
   @IsArray()

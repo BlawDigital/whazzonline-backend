@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -9,6 +10,7 @@ import { PrismaService } from 'prisma/prisma.service';
 import type { Prisma } from '../../generated/prisma/client';
 import {
   CreateSupportTicketDto,
+  AppFeedbackDto,
   SupportListDto,
   SupportMessageDto,
   SupportStatusDto,
@@ -26,7 +28,7 @@ const senderInclude = {
 type Message = Prisma.SupportMessageGetPayload<{
   include: typeof senderInclude;
 }>;
-export type SupportAudience = 'seller' | 'admin';
+export type SupportAudience = 'seller' | 'user' | 'admin';
 
 @Injectable()
 export class SupportService {
@@ -43,12 +45,18 @@ export class SupportService {
     });
     if (
       !user?.isActive ||
-      (audience === 'admin' ? user.role !== 'ADMIN' : !user.vendorProfile)
+      (audience === 'admin'
+        ? user.role !== 'ADMIN'
+        : audience === 'seller'
+          ? !user.vendorProfile
+          : false)
     ) {
       throw new ForbiddenException(
         audience === 'admin'
           ? 'Administrator access required.'
-          : 'Seller access required.',
+          : audience === 'seller'
+            ? 'Seller access required.'
+            : 'Active account required.',
       );
     }
   }
@@ -62,7 +70,7 @@ export class SupportService {
     const ticket = await this.prisma.supportTicket.findFirst({
       where: {
         id: ticketId,
-        ...(audience === 'seller' ? { ownerUserId: userId } : {}),
+        ...(audience !== 'admin' ? { ownerUserId: userId } : {}),
       },
     });
     if (!ticket) throw new NotFoundException('Support ticket not found.');
@@ -91,13 +99,17 @@ export class SupportService {
         [message.sender.firstName, message.sender.lastName]
           .filter(Boolean)
           .join(' ') ||
-        (message.senderRole === 'admin' ? 'Support team' : 'Seller'),
+        (message.senderRole === 'admin'
+          ? 'Support team'
+          : message.senderRole === 'seller'
+            ? 'Seller'
+            : 'Member'),
       text: message.text,
       createdAt: message.createdAt.toISOString(),
       direction: message.senderUserId === userId ? 'outgoing' : 'incoming',
       attachments: parseSupportAttachments(message.attachments).map((file) => ({
         ...file,
-        url: `/${audience}/support/tickets/${message.ticketId}/messages/${message.id}/attachments/${file.id}`,
+        url: `${audience === 'user' ? '' : `/${audience}`}/support/tickets/${message.ticketId}/messages/${message.id}/attachments/${file.id}`,
       })),
     };
   }
@@ -105,7 +117,7 @@ export class SupportService {
   async list(userId: string, query: SupportListDto, audience: SupportAudience) {
     await this.authorize(userId, audience);
     const where = {
-      ...(audience === 'seller' ? { ownerUserId: userId } : {}),
+      ...(audience !== 'admin' ? { ownerUserId: userId } : {}),
       ...(query.status ? { status: query.status } : {}),
     };
     const [tickets, total] = await this.prisma.$transaction([
@@ -169,6 +181,53 @@ export class SupportService {
     return this.detail(userId, ticket.id, 'seller');
   }
 
+  async feedback(userId: string, dto: AppFeedbackDto) {
+    await this.authorize(userId, 'user');
+    const receipt = (ticket: {
+      id: string;
+      status: string;
+      createdAt: Date;
+    }) => ({
+      id: ticket.id,
+      status: ticket.status,
+      createdAt: ticket.createdAt.toISOString(),
+    });
+    const existing = await this.prisma.supportTicket.findFirst({
+      where: { id: dto.requestId, ownerUserId: userId },
+    });
+    if (existing) return receipt(existing);
+    try {
+      const ticket = await this.prisma.supportTicket.create({
+        data: {
+          id: dto.requestId,
+          ownerUserId: userId,
+          category: dto.category,
+          subject: dto.subject.trim(),
+          messages: {
+            create: {
+              senderUserId: userId,
+              senderRole: 'user',
+              text: dto.text.trim(),
+            },
+          },
+        },
+      });
+      return receipt(ticket);
+    } catch (error) {
+      // Repeated or concurrent delivery of the same request must create one ticket.
+      const saved = await this.prisma.supportTicket.findFirst({
+        where: { id: dto.requestId, ownerUserId: userId },
+      });
+      if (saved) return receipt(saved);
+      if ((error as { code?: string }).code === 'P2002') {
+        throw new ConflictException(
+          'Please start a new request and try again.',
+        );
+      }
+      throw error;
+    }
+  }
+
   async send(
     userId: string,
     ticketId: string,
@@ -197,7 +256,7 @@ export class SupportService {
           where: { id: ticketId },
           data: {
             updatedAt: created.createdAt,
-            ...(audience === 'seller' ? { status: 'open' } : {}),
+            ...(audience !== 'admin' ? { status: 'open' } : {}),
           },
         });
         return created;

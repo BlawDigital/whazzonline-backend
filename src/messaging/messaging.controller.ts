@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SendMessageDto } from './dto/send-message.dto';
 import { StartConversationDto } from './dto/start-conversation.dto';
 import { ConversationTypingDto } from './dto/conversation-typing.dto';
+import { ConversationFavoriteDto } from './dto/conversation-favorite.dto';
 import { UpdateConversationStatusDto } from './dto/update-conversation-status.dto';
 import { MessagingService } from './messaging.service';
 import { chatUploadOptions, publicChatUploadUrl } from './chat-upload.config';
@@ -27,6 +28,15 @@ import { chatUploadOptions, publicChatUploadUrl } from './chat-upload.config';
 @UseGuards(JwtAuthGuard)
 export class MessagingController {
   constructor(private readonly messaging: MessagingService) {}
+  @Patch(':conversationId/favorite')
+  favorite(@Req() request: AuthenticatedRequest, @Param('conversationId') id: string, @Body() dto: ConversationFavoriteDto) {
+    return this.messaging.favorite(request.user.sub, id, dto.favorite);
+  }
+
+  @Get('activity')
+  activity(@Req() request: AuthenticatedRequest) {
+    return this.messaging.activity(request.user.sub);
+  }
 
   @Get()
   list(@Req() request: AuthenticatedRequest) {
