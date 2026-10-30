@@ -935,6 +935,8 @@ model InvoiceTransferReport {
   invoice    GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
   requestId  String
   reference  String
+  remitterName String?
+  transferAmount Float?
   note       String?
   status     String       @default("PENDING")
   createdAt  DateTime     @default(now())

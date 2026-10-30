@@ -903,7 +903,13 @@ export class GoodsInvoicesService {
   async report(
     id: string,
     access: InvoiceAccess,
-    dto: { requestId: string; reference?: string; note?: string },
+    dto: {
+      requestId: string;
+      reference?: string;
+      note?: string;
+      remitterName?: string;
+      transferAmount?: number;
+    },
     evidence: { name: string; mime: string; content: Buffer }[] = [],
   ) {
     const invoice = await this.prisma.goodsInvoice.findUnique({
@@ -956,6 +962,8 @@ export class GoodsInvoicesService {
           invoiceId: id,
           requestId: dto.requestId,
           reference: dto.reference?.trim() ?? '',
+          remitterName: dto.remitterName?.trim(),
+          transferAmount: dto.transferAmount,
           note: dto.note?.trim(),
           evidence: {
             create: evidence.map((file) => ({
