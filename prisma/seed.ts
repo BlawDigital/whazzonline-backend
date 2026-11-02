@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient, type Product, type User, type VendorProfile } from '../generated/prisma/client';
 import { seedConnectionString } from './seed-connection';
+import { INTEREST_CATALOG } from '../src/interests/interest-catalog';
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: seedConnectionString(), connectionTimeoutMillis: 15_000 }) });
 const TEST_PASSWORD = 'WhazzTest@123';
@@ -50,12 +51,6 @@ const products = [
   { seller: 2, name: 'Cloud-Soft Duvet', category: 'Home', price: 68000 },
 ] as const;
 
-const interests = [
-  ['Fashion & Apparel', 'fashion'], ['Electronics', 'electronics'], ['Services', 'services'],
-  ['Food & Groceries', 'food'], ['Home & Living', 'home'], ['Beauty & Personal Care', 'beauty'],
-  ['Health & Wellness', 'health'], ['Agriculture & Farm Produce', 'agriculture'], ['Children & Baby', 'children'],
-] as const;
-
 async function seedUsers() {
   const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
   const result: User[] = [];
@@ -69,7 +64,7 @@ async function seedUsers() {
       update: { ...account, passwordHash, authProvider: 'EMAIL', address, countryCode: '+234', emailVerified: true, isVerified: true, isActive: true },
     }));
   }
-  for (const [name, slug] of interests) {
+  for (const { name, slug } of INTEREST_CATALOG) {
     await prisma.interest.upsert({ where: { slug }, create: { name, slug }, update: { name } });
   }
   return result;
