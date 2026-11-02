@@ -44,6 +44,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../auth/guards/authenticated-request';
 import {
   productUploadOptions,
+  productMediaUploadOptions,
   publicProductUploadUrl,
   removeProductUploads,
 } from './product-upload.config';
@@ -148,19 +149,21 @@ export class VendorsController {
 
   @Post(':userId/products')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FilesInterceptor('images', 5, productUploadOptions))
+  @UseInterceptors(FileFieldsInterceptor([{ name: 'images', maxCount: 5 }, { name: 'video', maxCount: 1 }], productMediaUploadOptions))
   async createProduct(
     @Req() request: AuthenticatedRequest,
     @Param('userId') userId: string,
     @Body() dto: CreateVendorProductDto,
-    @UploadedFiles() files: Express.Multer.File[],
+    @UploadedFiles() files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
+    const all = Object.values(files ?? {}).flat();
     if (request.user.sub !== userId) {
-      await removeProductUploads(files ?? []);
+      await removeProductUploads(all);
       throw new ForbiddenException('You can only manage your own products.');
     }
-    const images = files ?? [];
+    const images = files?.images ?? [];
     if (images.length === 0) {
+      await removeProductUploads(all);
       throw new BadRequestException('Add at least one product image.');
     }
 
@@ -169,9 +172,10 @@ export class VendorsController {
         userId,
         dto,
         images.map(publicProductUploadUrl),
+        files?.video?.[0]?.path,
       );
     } catch (error) {
-      await removeProductUploads(images);
+      await removeProductUploads(all);
       throw error;
     }
   }

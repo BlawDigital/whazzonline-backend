@@ -376,6 +376,7 @@ export class AuthService {
         email: normalizedEmail,
         passwordHash,
         registrationType,
+        ...(registrationType === 'BUYER' ? { buyerOnboardingStep: 0 } : {}),
         role,
         ...(referrer
           ? {
@@ -497,8 +498,20 @@ export class AuthService {
       throw new NotFoundException('User not found.');
     }
 
-    const { firstName, lastName, dateOfBirth, state, city, interests } =
+    const { firstName, lastName, dateOfBirth, state, city, interests, buyerOnboardingStep } =
       updateProfileDto;
+
+    if (buyerOnboardingStep !== undefined) {
+      if (buyerOnboardingStep > (user.buyerOnboardingStep ?? 0) + 1)
+        throw new BadRequestException('Complete the current profile step first.');
+      if (buyerOnboardingStep >= 1 &&
+          (!(firstName ?? user.firstName)?.trim() || !(state ?? user.state)?.trim() || !(city ?? user.city)?.trim()))
+        throw new BadRequestException('Add your name, state, and city.');
+      if (buyerOnboardingStep >= 2 && !user.emailVerified)
+        throw new BadRequestException('Verify your email before continuing.');
+      if (buyerOnboardingStep === 4 && !interests?.length)
+        throw new BadRequestException('Choose at least one shopping interest.');
+    }
 
     let interestIds: string[] | undefined;
     if (interests !== undefined) {
@@ -532,6 +545,9 @@ export class AuthService {
       },
 
       data: {
+        ...(buyerOnboardingStep !== undefined && (user.buyerOnboardingStep === null || user.buyerOnboardingStep === undefined || buyerOnboardingStep > user.buyerOnboardingStep) && {
+          buyerOnboardingStep: Math.max(user.buyerOnboardingStep ?? 0, buyerOnboardingStep),
+        }),
         ...(firstName !== undefined && {
           firstName: firstName.trim(),
         }),

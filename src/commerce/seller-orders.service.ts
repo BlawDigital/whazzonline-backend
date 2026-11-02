@@ -1,4 +1,5 @@
 import { releaseOfferUnits } from '../vendors/offer-pricing';
+import { addOrderToThread } from '../messaging/conversation-thread';
 import {
   BadRequestException,
   ConflictException,
@@ -383,6 +384,10 @@ export class SellerOrdersService {
         });
       }
       await syncOrder(tx, id);
+      if (status === 'processing' && order.userId) {
+        const vendor = await tx.vendorProfile.findUnique({ where: { userId }, select: { id: true } });
+        if (vendor) await addOrderToThread(tx, order.userId, vendor.id, userId, id);
+      }
     });
     return this.detail(userId, id);
   }
@@ -550,25 +555,9 @@ export class SellerOrdersService {
       );
     }
 
-    const clientThreadId = `order:${orderId}:${vendor.id}`;
-    const conversation = await this.prisma.conversation.upsert({
-      where: { clientThreadId },
-      create: {
-        buyerUserId: order.userId,
-        clientThreadId,
-        subject: `Order ${orderId}`,
-        vendorProfileId: vendor.id,
-      },
-      update: {},
-      select: { id: true, buyerUserId: true, vendorProfileId: true },
-    });
-    if (
-      conversation.buyerUserId !== order.userId ||
-      conversation.vendorProfileId !== vendor.id
-    )
-      throw new ConflictException(
-        'The order conversation belongs to another account.',
-      );
+    const conversation = await this.prisma.$transaction((tx) =>
+      addOrderToThread(tx, order.userId!, vendor.id, userId, orderId),
+    );
     return { id: conversation.id };
   }
 }

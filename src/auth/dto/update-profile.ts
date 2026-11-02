@@ -1,6 +1,11 @@
-import { IsArray, IsOptional, IsString } from "class-validator";
+import { IsArray, IsOptional, IsString, IsInt, Min, Max } from "class-validator";
 
 export class UpdateProfileDto {
+    @IsOptional()
+    @IsInt()
+    @Min(0)
+    @Max(4)
+    buyerOnboardingStep?: number;
     @IsOptional()
     @IsString()
     firstName?: string;

@@ -54,6 +54,7 @@ model User {
   state       String?
   countryCode String?
   avatarUrl   String?
+  buyerOnboardingStep Int?
 
   email        String? @unique
   passwordHash String?
@@ -376,6 +377,7 @@ model Product {
   quantity       Int
   variants       Json             @default("[]")
   imageUrls      String[]
+  videoUrl       String?
   status         ProductStatus    @default(ACTIVE)
 
   cartItems CommerceCartItem[]
@@ -487,6 +489,7 @@ model Conversation {
   subject          String?
   productId        String?
   productName      String?
+  latestOrderId    String?
   status           ConversationStatus @default(OPEN)
   messages         ChatMessage[]
 

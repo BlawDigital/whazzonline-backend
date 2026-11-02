@@ -1,3 +1,4 @@
+import { existingOrNewThread } from '../messaging/conversation-thread';
 import {
   storedVariants,
   variantIndex,
@@ -836,16 +837,7 @@ export class GoodsInvoicesService {
                     vendorProfileId: profile.id,
                   },
                 })
-              : await tx.conversation.upsert({
-                  where: { clientThreadId: `order:${order.id}:${vendorId}` },
-                  create: {
-                    buyerUserId: input.userId,
-                    vendorProfileId: profile.id,
-                    clientThreadId: `order:${order.id}:${vendorId}`,
-                    subject: `Invoice ${invoice.number}`,
-                  },
-                  update: {},
-                });
+              : await existingOrNewThread(tx, input.userId, profile.id, `Invoice ${invoice.number}`);
             if (!conversation)
               throw new ForbiddenException(
                 'Invoice conversation does not match.',
@@ -861,7 +853,7 @@ export class GoodsInvoicesService {
             });
             await tx.conversation.update({
               where: { id: conversation.id },
-              data: { updatedAt: new Date() },
+              data: { updatedAt: new Date(), latestOrderId: order.id },
             });
           }
         }

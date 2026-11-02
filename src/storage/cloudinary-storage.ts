@@ -22,6 +22,10 @@ export function cloudinaryClient() {
 }
 
 export function validFileSignature(buffer: Buffer, mime: string) {
+  if (mime === 'video/mp4' || mime === 'video/quicktime')
+    return buffer.toString('ascii', 4, 8) === 'ftyp';
+  if (mime === 'video/webm')
+    return buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
   if (mime === 'image/png')
     return buffer
       .subarray(0, 8)
@@ -50,11 +54,13 @@ export async function uploadCloudinary(
       'File content does not match its image or document type.',
     );
   const client = cloudinaryClient();
+  const video = mime.startsWith('video/');
   return new Promise((resolve, reject) => {
     const stream = client.uploader.upload_stream(
       {
         public_id: `whazzonline/${folder}/${id}${mime === 'application/pdf' ? '.pdf' : ''}`,
-        resource_type: mime === 'application/pdf' ? 'raw' : 'image',
+        resource_type: video ? 'video' : mime === 'application/pdf' ? 'raw' : 'image',
+        ...(video ? { transformation: [{ audio_codec: 'none' }], format: 'mp4' } : {}),
         type: privateAsset ? 'authenticated' : 'upload',
         overwrite: false,
         timeout: 60000,
@@ -64,7 +70,11 @@ export async function uploadCloudinary(
           reject(
             new BadGatewayException('Cloud upload failed. Please try again.'),
           );
-        else resolve(result);
+        else if (video && (!Number.isFinite(result.duration) || result.duration <= 0 || result.duration > 7.1 || !result.width || !result.height)) {
+          void client.uploader.destroy(result.public_id, { resource_type: 'video', invalidate: true })
+            .catch(() => undefined)
+            .finally(() => reject(new BadRequestException('Product videos must be no longer than 7 seconds.')));
+        } else resolve(result);
       },
     );
     stream.on('error', () =>
@@ -83,7 +93,8 @@ export async function removeCloudinaryUrl(value?: string | null) {
   } catch {
     return;
   }
-  const prefix = `/${process.env.CLOUDINARY_CLOUD_NAME}/image/`;
+  const resourceType = url.pathname.startsWith(`/${process.env.CLOUDINARY_CLOUD_NAME}/video/`) ? 'video' : 'image';
+  const prefix = `/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/`;
   if (url.hostname !== 'res.cloudinary.com' || !url.pathname.startsWith(prefix))
     return;
   const path = url.pathname.slice(prefix.length);
@@ -96,28 +107,28 @@ export async function removeCloudinaryUrl(value?: string | null) {
     .replace(/\.[^./]+$/, '');
   if (!publicId.startsWith('whazzonline/')) return;
   await cloudinaryClient()
-    .uploader.destroy(publicId, { type, invalidate: true })
+    .uploader.destroy(publicId, { type, invalidate: true, ...(resourceType === 'video' ? { resource_type: 'video' } : {}) })
     .catch(() => undefined);
 }
 
-export function cloudinaryImageOptions(folder: string, files: number) {
+export function cloudinaryImageOptions(folder: string, files: number, maxMB = 5, allowVideo = false) {
   const storage: StorageEngine = {
     _handleFile(_request, file, callback) {
       const chunks: Buffer[] = [];
       let size = 0;
       file.stream.on('data', (chunk: Buffer) => {
         size += chunk.length;
-        if (size <= 5 * 1024 * 1024) chunks.push(chunk);
+        if (size <= maxMB * 1024 * 1024) chunks.push(chunk);
       });
       file.stream.on('error', callback);
       file.stream.on('end', () => {
         if (
           (file.stream as NodeJS.ReadableStream & { truncated?: boolean })
             .truncated ||
-          size > 5 * 1024 * 1024
+          size > maxMB * 1024 * 1024
         )
           return callback(
-            new BadRequestException('Images must be at most 5 MB.'),
+            new BadRequestException(`Files must be at most ${maxMB} MB.`),
           );
         const privateAsset =
           folder === 'chat' ||
@@ -152,16 +163,17 @@ export function cloudinaryImageOptions(folder: string, files: number) {
   };
   return {
     storage,
-    limits: { fileSize: 5 * 1024 * 1024, files },
+    limits: { fileSize: maxMB * 1024 * 1024, files },
     fileFilter: (
       _request: unknown,
       file: Express.Multer.File,
       callback: (error: Error | null, accept: boolean) => void,
     ) => {
-      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype))
+      const video = allowVideo && file.fieldname === 'video';
+      if (!(video ? ['video/mp4', 'video/webm', 'video/quicktime'] : ['image/jpeg', 'image/png', 'image/webp']).includes(file.mimetype))
         return callback(
           new BadRequestException(
-            'Only PNG, JPEG, and WebP images are allowed.',
+            video ? 'Use an MP4, WebM, or MOV video.' : 'Only PNG, JPEG, and WebP images are allowed.',
           ),
           false,
         );

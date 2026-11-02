@@ -198,6 +198,7 @@ export class MarketplaceService {
           salesCount: salesByProduct.get(product.id) ?? 0,
           imageUri: product.imageUrls[0] ?? '',
           imageUris: product.imageUrls,
+          videoUrl: product.videoUrl,
           location: `${product.vendorProfile.city}, ${product.vendorProfile.state}`,
           mapAddress: [
             product.vendorProfile.address,

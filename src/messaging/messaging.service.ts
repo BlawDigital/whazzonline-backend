@@ -10,6 +10,7 @@ import { MessageKind, SendMessageDto } from './dto/send-message.dto';
 import { ProductContextDto } from './dto/product-context.dto';
 import { StartConversationDto } from './dto/start-conversation.dto';
 import { ConversationStatusValue } from './dto/update-conversation-status.dto';
+import { existingOrNewThread } from './conversation-thread';
 
 const conversationInclude = {
   messages: { orderBy: { createdAt: 'desc' as const }, take: 1 },
@@ -68,7 +69,7 @@ export class MessagingService {
       hour: 'numeric',
       minute: '2-digit',
       hour12: true,
-    }).format(value);
+    }).format(value).toUpperCase();
   }
   private participant(userId: string, id?: string) {
     return {
@@ -158,6 +159,7 @@ export class MessagingService {
       sentAt: message.createdAt.toISOString(),
       text: message.text ?? undefined,
       timestampLabel: this.label(message.createdAt),
+      orderId: message.clientMessageId?.startsWith('order-update:') ? message.clientMessageId.slice('order-update:'.length) : undefined,
       productContext: message.productContext ?? undefined,
     };
   }
@@ -206,6 +208,7 @@ export class MessagingService {
       unreadCount,
       vendorId: conversation.vendorProfile.userId,
       buyerId: conversation.buyerUserId,
+      orderId: conversation.latestOrderId ?? undefined,
       updatedAt: conversation.updatedAt.toISOString(),
       verified:
         !seller && conversation.vendorProfile.reviewStatus === 'APPROVED',
@@ -415,27 +418,10 @@ export class MessagingService {
         throw new BadRequestException('Invalid conversation request.');
       }
     } else {
-      record =
-        (await this.prisma.conversation.findFirst({
-          where: {
-            buyerUserId: userId,
-            vendorProfileId: vendor.id,
-            status: { in: ['OPEN', 'PENDING'] },
-            productId: context?.productId ?? null,
-          },
-          include: conversationInclude,
-          orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-        })) ??
-        (await this.prisma.conversation.create({
-          data: {
-            buyerUserId: userId,
-            subject: context?.name ?? 'Store enquiry',
-            productId: context?.productId,
-            productName: context?.name,
-            vendorProfileId: vendor.id,
-          },
-          include: conversationInclude,
-        }));
+      record = await this.prisma.$transaction(async (tx) => {
+        const thread = await existingOrNewThread(tx, userId, vendor.id, context?.name, context?.productId, context?.name);
+        return tx.conversation.findUniqueOrThrow({ where: { id: thread.id }, include: conversationInclude });
+      });
     }
     const conversation = context
       ? await this.prisma.$transaction(async (tx) => {
