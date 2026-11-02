@@ -6,6 +6,7 @@ import {
   Equals,
   IsArray,
   IsInt,
+  IsNumber,
   IsEmail,
   IsIn,
   IsObject,
@@ -21,6 +22,13 @@ import {
 } from 'class-validator';
 export class TransferReportDto {
   @IsUUID() requestId!: string;
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(120) remitterName?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(1000000000)
+  transferAmount?: number;
   @IsOptional() @IsString() @MaxLength(120) reference?: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }

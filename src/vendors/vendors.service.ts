@@ -383,6 +383,7 @@ export class VendorsService {
     userId: string,
     dto: CreateVendorProductDto,
     imageUrls: string[],
+    videoUrl?: string,
   ) {
     if (dto.promoPrice !== undefined && dto.promoPrice >= dto.unitPrice) {
       throw new BadRequestException(
@@ -446,6 +447,7 @@ export class VendorsService {
         category: dto.category,
         description: dto.description,
         imageUrls,
+        ...(videoUrl ? { videoUrl } : {}),
         mainCategory: dto.mainCategory,
         name: dto.name,
         quantity: dto.quantity,

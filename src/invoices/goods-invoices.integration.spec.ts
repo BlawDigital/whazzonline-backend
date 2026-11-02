@@ -538,10 +538,27 @@ databaseTests('direct merchant invoice integration', () => {
         .send({ requestId: randomUUID() })
         .expect(400);
       const reportId = randomUUID();
+      for (const fields of [
+        { remitterName: 'A' },
+        { transferAmount: -1 },
+        { transferAmount: 'not-a-number' },
+      ]) {
+        await request(app.getHttpServer())
+          .post(`/invoices/${id}/transfer-report`)
+          .auth(token, { type: 'bearer' })
+          .send({
+            requestId: randomUUID(),
+            reference: 'BANK-VALIDATION',
+            ...fields,
+          })
+          .expect(400);
+      }
       const report = await request(app.getHttpServer())
         .post(`/invoices/${id}/transfer-report`)
         .auth(token, { type: 'bearer' })
         .field('requestId', reportId)
+        .field('remitterName', 'Test Buyer')
+        .field('transferAmount', String(batch.invoices[0].total))
         .attach('evidence', evidence, {
           filename: 'transfer.pdf',
           contentType: 'application/pdf',
@@ -549,6 +566,18 @@ databaseTests('direct merchant invoice integration', () => {
         .expect(201);
       expect(report.body.status).toBe('PAYMENT_REPORTED');
       expect(report.body.reports[0].reference).toBe('');
+      expect(report.body.reports[0]).toMatchObject({
+        remitterName: 'Test Buyer',
+        transferAmount: batch.invoices[0].total,
+      });
+      const sellerView = await request(app.getHttpServer())
+        .get(`/invoices/${id}`)
+        .auth(merchantToken, { type: 'bearer' })
+        .expect(200);
+      expect(sellerView.body.reports[0]).toMatchObject({
+        remitterName: 'Test Buyer',
+        transferAmount: batch.invoices[0].total,
+      });
       const file = report.body.reports[0].evidence[0];
       expect(file).toMatchObject({
         name: 'transfer.pdf',

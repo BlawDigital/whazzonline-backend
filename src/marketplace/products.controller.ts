@@ -26,6 +26,7 @@ export class ProductsController {
   private mapProduct(product: {
     id: string;
     imageUrls: string[];
+    videoUrl?: string | null;
     name: string;
     promoEndsAt: Date | null;
     promoPrice: number | null;
@@ -49,6 +50,7 @@ export class ProductsController {
       id: product.id,
       imageUri: product.imageUrls[0] ?? '',
       imageUris: product.imageUrls,
+      videoUrl: product.videoUrl,
       name: product.name,
       price: `₦${product.unitPrice.toLocaleString()}`,
       salePrice: activeOffer
