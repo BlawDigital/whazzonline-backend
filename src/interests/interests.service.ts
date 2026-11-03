@@ -1,53 +1,37 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "prisma/prisma.service";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from 'prisma/prisma.service';
+import { INTEREST_CATALOG } from './interest-catalog';
 
 @Injectable()
 export class InterestsService {
-    constructor(private readonly prisma: PrismaService) { }
+  private catalogInitialization?: Promise<unknown>;
 
-    async findAll() {
-        return this.prisma.interest.findMany({
-            orderBy: {
-                name: "asc",
-            },
-            select: {
-                id: true,
-                name: true,
-                slug: true,
-            },
-        });
-    }
-    
-    async findAllForUser(userId: string) {
-        const user = await this.prisma.user.findUnique({
-            where: { id: userId },
-            select: {
-                interests: {
-                    select: {
-                        id: true,
-                    },
-                },
-            },
-        });
-        if (!user) {
-            throw new NotFoundException("User not found.");
-        }
-        const selectedIds = new Set(user.interests.map((interest) => interest.id),);
+  constructor(private readonly prisma: PrismaService) {}
 
+  async findAll() {
+    this.catalogInitialization ??= this.prisma.interest
+      .createMany({ data: [...INTEREST_CATALOG], skipDuplicates: true })
+      .catch((error: unknown) => {
+        this.catalogInitialization = undefined;
+        throw error;
+      });
+    await this.catalogInitialization;
+    return this.prisma.interest.findMany({
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, slug: true },
+    });
+  }
 
-        const interest = await this.prisma.interest.findMany({
-            orderBy: {
-                name: "asc",
-            },
-            select: {
-                id: true,
-                name: true,
-                slug: true,
-            },
-        });
-
-        return interest.map((interest) => ({
-            ...interest, isSelected: selectedIds.has(interest.id),
-        }));
-    }
+  async findAllForUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { interests: { select: { id: true } } },
+    });
+    if (!user) throw new NotFoundException('User not found.');
+    const selectedIds = new Set(user.interests.map((interest) => interest.id));
+    return (await this.findAll()).map((interest) => ({
+      ...interest,
+      isSelected: selectedIds.has(interest.id),
+    }));
+  }
 }
