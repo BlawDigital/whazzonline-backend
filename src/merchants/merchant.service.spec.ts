@@ -80,10 +80,17 @@ describe('merchant persistence and permissions', () => {
       );
       expect(result.items[0]).toMatchObject({
         activeStoryCount: 12,
+        activeStoryIds: ['story'],
         expiresAt: new Date(now - 1000 + 86400000).toISOString(),
       });
       expect(result.items[0]).not.toHaveProperty('mediaPublicId');
       expect(result.items[0]).not.toHaveProperty('musicPublicId');
+      expect(prisma.merchantContent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: { id: true, merchantId: true },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        }),
+      );
     } finally {
       clock.mockRestore();
     }
