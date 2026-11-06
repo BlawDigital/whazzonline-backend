@@ -6,6 +6,7 @@ import {
 import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
 import { randomUUID } from 'node:crypto';
 import type { StorageEngine } from 'multer';
+import { withCloudinaryClock } from './cloudinary-clock';
 
 export function cloudinaryClient() {
   const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } =
@@ -55,32 +56,60 @@ export async function uploadCloudinary(
     );
   const client = cloudinaryClient();
   const video = mime.startsWith('video/');
-  return new Promise((resolve, reject) => {
-    const stream = client.uploader.upload_stream(
-      {
-        public_id: `whazzonline/${folder}/${id}${mime === 'application/pdf' ? '.pdf' : ''}`,
-        resource_type: video ? 'video' : mime === 'application/pdf' ? 'raw' : 'image',
-        ...(video ? { transformation: [{ audio_codec: 'none' }], format: 'mp4' } : {}),
-        type: privateAsset ? 'authenticated' : 'upload',
-        overwrite: false,
-        timeout: 60000,
-      },
-      (error, result) => {
-        if (error || !result)
-          reject(
-            new BadGatewayException('Cloud upload failed. Please try again.'),
-          );
-        else if (video && (!Number.isFinite(result.duration) || result.duration <= 0 || result.duration > 7.1 || !result.width || !result.height)) {
-          void client.uploader.destroy(result.public_id, { resource_type: 'video', invalidate: true })
-            .catch(() => undefined)
-            .finally(() => reject(new BadRequestException('Product videos must be no longer than 7 seconds.')));
-        } else resolve(result);
-      },
+  return withCloudinaryClock(
+    (timestamp) =>
+      new Promise<UploadApiResponse>((resolve, reject) => {
+        const stream = client.uploader.upload_stream(
+          {
+            public_id: `whazzonline/${folder}/${id}${mime === 'application/pdf' ? '.pdf' : ''}`,
+            resource_type: video
+              ? 'video'
+              : mime === 'application/pdf'
+                ? 'raw'
+                : 'image',
+            ...(video
+              ? { transformation: [{ audio_codec: 'none' }], format: 'mp4' }
+              : {}),
+            type: privateAsset ? 'authenticated' : 'upload',
+            overwrite: false,
+            timeout: 60000,
+            ...(timestamp ? { timestamp } : {}),
+          },
+          (error, result) => {
+            if (error || !result)
+              reject(error ?? new Error('Storage returned no file.'));
+            else if (
+              video &&
+              (!Number.isFinite(result.duration) ||
+                result.duration <= 0 ||
+                result.duration > 7.1 ||
+                !result.width ||
+                !result.height)
+            ) {
+              void client.uploader
+                .destroy(result.public_id, {
+                  resource_type: 'video',
+                  invalidate: true,
+                })
+                .catch(() => undefined)
+                .finally(() =>
+                  reject(
+                    new BadRequestException(
+                      'Product videos must be no longer than 7 seconds.',
+                    ),
+                  ),
+                );
+            } else resolve(result);
+          },
+        );
+        stream.on('error', reject);
+        stream.end(buffer);
+      }),
+  ).catch((error: unknown) => {
+    if (error instanceof BadRequestException) throw error;
+    throw new BadGatewayException(
+      'We couldn’t upload your file. Please try again.',
     );
-    stream.on('error', () =>
-      reject(new BadGatewayException('Cloud upload failed. Please try again.')),
-    );
-    stream.end(buffer);
   });
 }
 
@@ -93,7 +122,11 @@ export async function removeCloudinaryUrl(value?: string | null) {
   } catch {
     return;
   }
-  const resourceType = url.pathname.startsWith(`/${process.env.CLOUDINARY_CLOUD_NAME}/video/`) ? 'video' : 'image';
+  const resourceType = url.pathname.startsWith(
+    `/${process.env.CLOUDINARY_CLOUD_NAME}/video/`,
+  )
+    ? 'video'
+    : 'image';
   const prefix = `/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/`;
   if (url.hostname !== 'res.cloudinary.com' || !url.pathname.startsWith(prefix))
     return;
@@ -107,11 +140,20 @@ export async function removeCloudinaryUrl(value?: string | null) {
     .replace(/\.[^./]+$/, '');
   if (!publicId.startsWith('whazzonline/')) return;
   await cloudinaryClient()
-    .uploader.destroy(publicId, { type, invalidate: true, ...(resourceType === 'video' ? { resource_type: 'video' } : {}) })
+    .uploader.destroy(publicId, {
+      type,
+      invalidate: true,
+      ...(resourceType === 'video' ? { resource_type: 'video' } : {}),
+    })
     .catch(() => undefined);
 }
 
-export function cloudinaryImageOptions(folder: string, files: number, maxMB = 5, allowVideo = false) {
+export function cloudinaryImageOptions(
+  folder: string,
+  files: number,
+  maxMB = 5,
+  allowVideo = false,
+) {
   const storage: StorageEngine = {
     _handleFile(_request, file, callback) {
       const chunks: Buffer[] = [];
@@ -170,10 +212,18 @@ export function cloudinaryImageOptions(folder: string, files: number, maxMB = 5,
       callback: (error: Error | null, accept: boolean) => void,
     ) => {
       const video = allowVideo && file.fieldname === 'video';
-      if (!(video ? ['video/mp4', 'video/webm', 'video/quicktime'] : ['image/jpeg', 'image/png', 'image/webp']).includes(file.mimetype))
+      if (
+        !(
+          video
+            ? ['video/mp4', 'video/webm', 'video/quicktime']
+            : ['image/jpeg', 'image/png', 'image/webp']
+        ).includes(file.mimetype)
+      )
         return callback(
           new BadRequestException(
-            video ? 'Use an MP4, WebM, or MOV video.' : 'Only PNG, JPEG, and WebP images are allowed.',
+            video
+              ? 'Use an MP4, WebM, or MOV video.'
+              : 'Only PNG, JPEG, and WebP images are allowed.',
           ),
           false,
         );

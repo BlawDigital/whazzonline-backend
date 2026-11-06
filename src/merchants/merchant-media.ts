@@ -4,6 +4,7 @@ import {
   validFileSignature,
 } from '../storage/cloudinary-storage';
 import { randomUUID } from 'node:crypto';
+import { withCloudinaryClock } from '../storage/cloudinary-clock';
 
 export function validMerchantMedia(buffer: Buffer, mime: string) {
   if (mime.startsWith('image/')) return validFileSignature(buffer, mime);
@@ -21,29 +22,31 @@ export async function uploadMerchantMedia(file: Express.Multer.File) {
     );
   const resourceType = file.mimetype.startsWith('video/') ? 'video' : 'image';
   const publicId = `whazzonline/merchant-content/${randomUUID()}`;
-  const result = await new Promise<{ secure_url: string }>(
-    (resolve, reject) => {
-      const stream = cloudinaryClient().uploader.upload_stream(
-        {
-          resource_type: resourceType,
-          public_id: publicId,
-          overwrite: false,
-          timeout: 60000,
-        },
-        (error, value) => {
-          if (error || !value)
-            reject(
-              new BadGatewayException('Media upload failed. Please try again.'),
-            );
-          else resolve(value);
-        },
-      );
-      stream.on('error', () =>
-        reject(new BadGatewayException('Media upload failed.')),
-      );
-      stream.end(file.buffer);
-    },
-  );
+  const result = await withCloudinaryClock(
+    (timestamp) =>
+      new Promise<{ secure_url: string }>((resolve, reject) => {
+        const stream = cloudinaryClient().uploader.upload_stream(
+          {
+            resource_type: resourceType,
+            public_id: publicId,
+            overwrite: false,
+            timeout: 60000,
+            ...(timestamp ? { timestamp } : {}),
+          },
+          (error, value) => {
+            if (error || !value)
+              reject(error ?? new Error('Storage returned no media.'));
+            else resolve(value);
+          },
+        );
+        stream.on('error', reject);
+        stream.end(file.buffer);
+      }),
+  ).catch(() => {
+    throw new BadGatewayException(
+      'We couldn’t upload your photo or video. Please try again.',
+    );
+  });
   return {
     mediaUrl: result.secure_url,
     mediaType: resourceType.toUpperCase(),
@@ -69,27 +72,29 @@ export async function uploadStoryMusic(file: Express.Multer.File) {
       'Choose an MP3, M4A, WAV or OGG file smaller than 10 MB.',
     );
   const publicId = `whazzonline/story-music/${randomUUID()}`;
-  const result = await new Promise<{ secure_url: string }>(
-    (resolve, reject) => {
-      const stream = cloudinaryClient().uploader.upload_stream(
-        {
-          resource_type: 'video',
-          public_id: publicId,
-          overwrite: false,
-          timeout: 60000,
-        },
-        (error, value) =>
-          error || !value
-            ? reject(
-                new BadGatewayException('Music upload failed. Please retry.'),
-              )
-            : resolve(value),
-      );
-      stream.on('error', () =>
-        reject(new BadGatewayException('Music upload failed.')),
-      );
-      stream.end(b);
-    },
-  );
+  const result = await withCloudinaryClock(
+    (timestamp) =>
+      new Promise<{ secure_url: string }>((resolve, reject) => {
+        const stream = cloudinaryClient().uploader.upload_stream(
+          {
+            resource_type: 'video',
+            public_id: publicId,
+            overwrite: false,
+            timeout: 60000,
+            ...(timestamp ? { timestamp } : {}),
+          },
+          (error, value) =>
+            error || !value
+              ? reject(error ?? new Error('Storage returned no music.'))
+              : resolve(value),
+        );
+        stream.on('error', reject);
+        stream.end(b);
+      }),
+  ).catch(() => {
+    throw new BadGatewayException(
+      'We couldn’t upload your music. Please try again.',
+    );
+  });
   return { url: result.secure_url, publicId };
 }
