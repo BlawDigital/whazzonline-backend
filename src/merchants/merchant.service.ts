@@ -172,6 +172,26 @@ export class MerchantService {
     const counts = new Map(
       storyCounts.map((row) => [row.merchantId, row._count._all]),
     );
+    const activeStories =
+      query.kind === 'STORY' && rows.length
+        ? await this.prisma.merchantContent.findMany({
+            where: {
+              ...where,
+              kind: 'STORY',
+              merchantId: {
+                in: [...new Set(rows.map((row) => row.merchantId))],
+              },
+            },
+            select: { id: true, merchantId: true },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          })
+        : [];
+    const storyIds = new Map<string, string[]>();
+    for (const story of activeStories) {
+      const ids = storyIds.get(story.merchantId) ?? [];
+      ids.push(story.id);
+      storyIds.set(story.merchantId, ids);
+    }
     return {
       items: rows.map(({ mediaPublicId, musicPublicId, ...row }) => {
         // The storage identifier is for owner-side cleanup only.
@@ -186,6 +206,7 @@ export class MerchantService {
                 ).toISOString()
               : null,
           activeStoryCount: counts.get(row.merchantId),
+          activeStoryIds: storyIds.get(row.merchantId),
           saved: saved.includes(row.merchantId),
           trusted: trusted.includes(row.merchantId),
         };
