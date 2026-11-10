@@ -14,8 +14,10 @@ import { CommerceModule } from './commerce/commerce.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { IneterestsModule } from './interests/interests.module';
 import { SupportModule } from './support/support.module';
+import { HealthController } from './health.controller';
 
 @Module({
+  controllers: [HealthController],
   imports: [
     MerchantModule,
     ConfigModule.forRoot({
@@ -37,4 +39,3 @@ import { SupportModule } from './support/support.module';
   ],
 })
 export class AppModule {}
-
