@@ -2,22 +2,14 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { configureHttp } from './http.config';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
   });
 
-  const allowedOrigins = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'https://whazzonline.com',
-  ];
-  app.enableCors({
-    origin: allowedOrigins,
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    credentials: true,
-  });
+  configureHttp(app);
 
   app.useGlobalPipes(
     new ValidationPipe({
