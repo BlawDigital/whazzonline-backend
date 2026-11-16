@@ -821,7 +821,7 @@ export class MerchantService {
   }
   async reviewViewer(userId: string, id: string) {
     const product = await this.product(id);
-    const [purchase, votes, ownReview] = await Promise.all([
+    const [purchase, votes, ownReview, reports] = await Promise.all([
       this.prisma.commerceOrderItem.findFirst({
         where: { productId: id, order: { userId, status: 'delivered' } },
         select: { id: true },
@@ -834,8 +834,13 @@ export class MerchantService {
         where: { productId_userId: { productId: id, userId } },
         select: { id: true },
       }),
+      this.prisma.productReviewReport.findMany({
+        where: { reporterId: userId, review: { productId: id } },
+        select: { reviewId: true },
+      }),
     ]);
     return {
+      reportedReviewIds: reports.map((r) => r.reviewId),
       isOwner: product.vendorProfile.userId === userId,
       canReview: product.vendorProfile.userId !== userId && !!purchase,
       ownReviewId: ownReview?.id ?? null,
@@ -879,6 +884,28 @@ export class MerchantService {
       notHelpfulCount: counts.find((c) => !c.helpful)?._count ?? 0,
     };
   }
+  async reportProductReview(
+    userId: string,
+    productId: string,
+    reviewId: string,
+    reason?: string,
+  ) {
+    await this.product(productId);
+    const review = await this.prisma.productReview.findFirst({
+      where: { id: reviewId, productId },
+      select: { userId: true },
+    });
+    if (!review)
+      throw new NotFoundException('Review not found for this product.');
+    if (review.userId === userId)
+      throw new ForbiddenException('You cannot report your own review.');
+    await this.prisma.productReviewReport.upsert({
+      where: { reporterId_reviewId: { reporterId: userId, reviewId } },
+      create: { reporterId: userId, reviewId, reason: reason?.trim() || null },
+      update: {},
+    });
+    return { reported: true };
+  }
   async review(
     userId: string,
     id: string,
@@ -888,8 +915,7 @@ export class MerchantService {
     const product = await this.product(id);
     if (product.vendorProfile.userId === userId)
       throw new ForbiddenException('You cannot review your own product.');
-    if (dto.comment.trim().length < 3)
-      throw new BadRequestException('Write a product comment.');
+    const comment = (dto.comment ?? '').trim();
     const purchased = await this.prisma.commerceOrderItem.findFirst({
       where: { productId: id, order: { userId, status: 'delivered' } },
       select: { id: true },
@@ -924,7 +950,7 @@ export class MerchantService {
           productId: id,
           userId,
           rating: dto.rating,
-          comment: dto.comment.trim(),
+          comment,
           ...(media
             ? {
                 mediaUrl: media.mediaUrl,
@@ -935,7 +961,7 @@ export class MerchantService {
         },
         update: {
           rating: dto.rating,
-          comment: dto.comment.trim(),
+          comment,
           ...(media
             ? {
                 mediaUrl: media.mediaUrl,

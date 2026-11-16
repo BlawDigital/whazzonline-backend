@@ -93,6 +93,7 @@ model User {
   merchantContacts     MerchantContact[]
   productReviews       ProductReview[]
   productReviewVotes   ProductReviewVote[]
+  productReviewReports ProductReviewReport[]
   buyerConversations   Conversation[]              @relation("ConversationBuyer")
   sentMessages         ChatMessage[]               @relation("MessageSender")
   supportTickets       SupportTicket[]             @relation("SupportTicketOwner")
@@ -864,6 +865,7 @@ model ProductReview {
   mediaType     String?
   mediaPublicId String?
   votes         ProductReviewVote[]
+  reports       ProductReviewReport[]
 
   @@unique([productId, userId])
   @@index([productId, createdAt])
@@ -992,6 +994,19 @@ model ProductReviewVote {
   helpful  Boolean
 
   @@unique([userId, reviewId])
+  @@index([reviewId])
+}
+
+model ProductReviewReport {
+  id         String        @id @default(uuid())
+  createdAt  DateTime      @default(now())
+  reviewId   String
+  review     ProductReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reporterId String
+  reporter   User          @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  reason     String?
+
+  @@unique([reporterId, reviewId])
   @@index([reviewId])
 }
 
