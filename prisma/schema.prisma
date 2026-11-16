@@ -353,6 +353,12 @@ model VendorCategory {
   @@index([parentId])
 }
 
+enum ProductCondition {
+  NEW
+  USED
+  REFURBISHED
+}
+
 model Product {
   id        String          @id @default(uuid())
   createdAt DateTime        @default(now())
@@ -367,6 +373,8 @@ model Product {
   category       String
   mainCategory   String?
   subCategories  String[]         @default([])
+  brand          String?
+  condition      ProductCondition?
   name           String
   description    String?
   specifications Json             @default("{}")
@@ -387,6 +395,7 @@ model Product {
 
   @@index([vendorProfileId, status])
   @@index([category])
+  @@index([brand])
   @@index([createdAt])
   @@index([promoStartsAt, promoEndsAt])
   @@index([aisleId])

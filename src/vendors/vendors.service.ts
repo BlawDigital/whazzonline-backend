@@ -449,6 +449,8 @@ export class VendorsService {
         imageUrls,
         ...(videoUrl ? { videoUrl } : {}),
         mainCategory: dto.mainCategory,
+        brand: dto.brand,
+        condition: dto.condition,
         name: dto.name,
         quantity: dto.quantity,
         specifications: normalizeSpecifications(dto.specifications),
