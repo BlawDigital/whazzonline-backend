@@ -10,6 +10,7 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { BulkVendorProductDto } from './dto/bulk-vendor-product.dto';
 import { storeCategories } from './store-categories';
 import {
   CreateDeliveryOfferType,
@@ -437,6 +438,7 @@ export class VendorsService {
         name: dto.name,
         quantity: dto.quantity,
         specifications: normalizeSpecifications(dto.specifications),
+        status: dto.status ?? 'ACTIVE',
         subCategories: dto.subCategories,
         unitPrice: dto.unitPrice,
         variants: normalizedVariants,
@@ -465,17 +467,17 @@ export class VendorsService {
     });
     const now = new Date();
     return offers.map((offer) => ({
-        ...offer,
-        status:
-          offer.status === 'DRAFT'
-            ? 'DRAFT'
-            : offer.startsAt > now
-              ? 'SCHEDULED'
-              : offer.endsAt <= now
-                ? 'ENDED'
-                : 'ACTIVE',
-        products: offer.products.map(({ product }) => product),
-      }));
+      ...offer,
+      status:
+        offer.status === 'DRAFT'
+          ? 'DRAFT'
+          : offer.startsAt > now
+            ? 'SCHEDULED'
+            : offer.endsAt <= now
+              ? 'ENDED'
+              : 'ACTIVE',
+      products: offer.products.map(({ product }) => product),
+    }));
   }
 
   async createOffer(userId: string, dto: CreateOfferDto, draftId?: string) {
@@ -802,6 +804,52 @@ export class VendorsService {
       where: { id: productId },
       data: { ...fields, ...(variants ? { variants } : {}) },
     });
+  }
+
+  async bulkUpdateProducts(userId: string, dto: BulkVendorProductDto) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: { id: true, setupCompleted: true },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    const productIds = [...new Set(dto.productIds)];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, vendorProfileId: profile.id },
+      select: { id: true, status: true },
+    });
+    if (products.length !== productIds.length)
+      throw new NotFoundException('One or more products were not found.');
+    if (
+      dto.action !== 'DELETE' &&
+      products.some((product) => product.status === 'DELETED')
+    )
+      throw new BadRequestException('Deleted products cannot be updated.');
+    if (dto.action === 'PUBLISH' && !profile.setupCompleted)
+      throw new BadRequestException(
+        'Complete store setup before publishing a product.',
+      );
+
+    const data =
+      dto.action === 'PUBLISH'
+        ? { status: 'ACTIVE' as const }
+        : dto.action === 'UNPUBLISH'
+          ? { status: 'ARCHIVED' as const }
+          : dto.action === 'DRAFT'
+            ? { status: 'DRAFT' as const }
+            : dto.action === 'DELETE'
+              ? { status: 'DELETED' as const }
+              : {
+                  category: dto.category!,
+                  mainCategory: dto.mainCategory ?? dto.category!,
+                  subCategories: [dto.category!],
+                };
+    await this.prisma.product.updateMany({
+      where: { id: { in: productIds }, vendorProfileId: profile.id },
+      data,
+    });
+    return { ids: productIds, action: dto.action };
   }
 
   async archiveProduct(userId: string, productId: string) {

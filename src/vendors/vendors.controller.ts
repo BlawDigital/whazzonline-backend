@@ -21,6 +21,7 @@ import {
 } from '@nestjs/platform-express';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { BulkVendorProductDto } from './dto/bulk-vendor-product.dto';
 import { CreateVendorWithdrawalDto } from './dto/create-vendor-withdrawal.dto';
 import { StoreCommunityService } from './store-community.service';
 import {
@@ -148,12 +149,21 @@ export class VendorsController {
 
   @Post(':userId/products')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileFieldsInterceptor([{ name: 'images', maxCount: 5 }, { name: 'video', maxCount: 1 }], productMediaUploadOptions))
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 5 },
+        { name: 'video', maxCount: 1 },
+      ],
+      productMediaUploadOptions,
+    ),
+  )
   async createProduct(
     @Req() request: AuthenticatedRequest,
     @Param('userId') userId: string,
     @Body() dto: CreateVendorProductDto,
-    @UploadedFiles() files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+    @UploadedFiles()
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
     const all = Object.values(files ?? {}).flat();
     if (request.user.sub !== userId) {
@@ -234,6 +244,18 @@ export class VendorsController {
       await removeProductUploads(files);
       throw error;
     }
+  }
+
+  @Patch(':userId/products/bulk')
+  @UseGuards(JwtAuthGuard)
+  bulkUpdateProducts(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Body() dto: BulkVendorProductDto,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own products.');
+    return this.vendorsService.bulkUpdateProducts(userId, dto);
   }
 
   @Patch(':userId/products/:productId')

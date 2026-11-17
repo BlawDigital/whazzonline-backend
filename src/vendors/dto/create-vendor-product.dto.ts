@@ -37,7 +37,7 @@ export class VendorProductVariantDto {
 
   @IsOptional()
   @IsObject()
-  options?: Record<string,string>;
+  options?: Record<string, string>;
 
   @IsOptional()
   @IsArray()
@@ -52,6 +52,10 @@ export class VendorProductVariantDto {
 }
 
 export class CreateVendorProductDto {
+  @IsOptional()
+  @IsIn(['DRAFT', 'ACTIVE'])
+  status?: 'DRAFT' | 'ACTIVE';
+
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
@@ -89,7 +93,8 @@ export class CreateVendorProductDto {
 
   @IsOptional()
   @Transform(({ value }) => {
-    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    if (value && typeof value === 'object' && !Array.isArray(value))
+      return value as Record<string, unknown>;
     if (typeof value !== 'string' || value.trim() === '') return {};
     try {
       return JSON.parse(value) as unknown;
