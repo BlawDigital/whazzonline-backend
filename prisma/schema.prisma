@@ -371,9 +371,6 @@ model Product {
   description    String?
   specifications Json             @default("{}")
   unitPrice      Int
-  promoPrice     Int?
-  promoStartsAt  DateTime?
-  promoEndsAt    DateTime?
   quantity       Int
   variants       Json             @default("[]")
   imageUrls      String[]
@@ -388,7 +385,6 @@ model Product {
   @@index([vendorProfileId, status])
   @@index([category])
   @@index([createdAt])
-  @@index([promoStartsAt, promoEndsAt])
   @@index([aisleId])
 }
 

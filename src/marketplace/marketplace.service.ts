@@ -149,16 +149,9 @@ export class MarketplaceService {
     return {
       categories,
       products: products.map((product) => {
-        let promoPrice = product.promoPrice;
-        let offerEndsAt = product.promoEndsAt;
-        let offerActive = Boolean(
-          promoPrice &&
-          product.promoStartsAt &&
-          product.promoEndsAt &&
-          product.promoStartsAt <= now &&
-          product.promoEndsAt > now,
-        );
-        if (!offerActive) promoPrice = null;
+        let promoPrice: number | null = null;
+        let offerEndsAt: Date | null = null;
+        let offerActive = false;
         for (const offer of offers) {
           if (
             !offer.products.some((p) => p.productId === product.id) ||

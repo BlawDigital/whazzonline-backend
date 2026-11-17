@@ -27,7 +27,6 @@ import {
   StoreCommunityQueryDto,
   ReviewVoteDto,
 } from './dto/store-community.dto';
-import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
@@ -178,19 +177,6 @@ export class VendorsController {
       await removeProductUploads(all);
       throw error;
     }
-  }
-
-  @Post(':userId/products/:productId/offer')
-  @UseGuards(JwtAuthGuard)
-  createProductOffer(
-    @Req() request: AuthenticatedRequest,
-    @Param('userId') userId: string,
-    @Param('productId') productId: string,
-    @Body() dto: CreateProductOfferDto,
-  ) {
-    if (request.user.sub !== userId)
-      throw new ForbiddenException('You can only manage your own offers.');
-    return this.vendorsService.createProductOffer(userId, productId, dto);
   }
 
   @Get(':userId/offers')

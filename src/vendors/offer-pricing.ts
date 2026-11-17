@@ -5,9 +5,6 @@ import type { Prisma } from 'generated/prisma/client';
 export type PricingProduct = {
   id: string;
   unitPrice: number;
-  promoPrice: number | null;
-  promoStartsAt: Date | null;
-  promoEndsAt: Date | null;
 };
 export type PricingOffer = {
   id: string;
@@ -48,18 +45,10 @@ export function applyOfferPricing(
       throw new BadRequestException(
         'A selected product is no longer available.',
       );
-    const promo =
-      product.promoPrice &&
-      product.promoStartsAt &&
-      product.promoEndsAt &&
-      product.promoStartsAt <= now &&
-      product.promoEndsAt > now
-        ? product.promoPrice
-        : null;
     return {
       ...line,
-      unitPrice: promo ?? product.unitPrice,
-      originalPrice: promo ? product.unitPrice : null,
+      unitPrice: product.unitPrice,
+      originalPrice: null,
     };
   });
   const claimed = new Map<string, number>();
