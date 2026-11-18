@@ -26,7 +26,7 @@ import {
 
 @Injectable()
 export class MerchantService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) { }
   private async merchant(userId: string, owner = false) {
     const profile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
@@ -85,15 +85,15 @@ export class MerchantService {
   async feed(userId: string | undefined, query: FeedDto) {
     const contacts = userId
       ? await this.prisma.merchantContact.findMany({
-          where: { userId },
-          select: { merchantId: true },
-        })
+        where: { userId },
+        select: { merchantId: true },
+      })
       : [];
     const trusts = userId
       ? await this.prisma.vendorTrustReview.findMany({
-          where: { reviewerUserId: userId },
-          select: { vendorProfileId: true },
-        })
+        where: { reviewerUserId: userId },
+        select: { vendorProfileId: true },
+      })
       : [];
     const saved = contacts.map((row) => row.merchantId);
     const trusted = [
@@ -133,37 +133,37 @@ export class MerchantService {
     const first =
       offset < priorityCount
         ? await this.prisma.merchantContent.findMany({
-            where: priority,
-            include,
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            skip: offset,
-            take: limit,
-          })
+          where: priority,
+          include,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: offset,
+          take: limit,
+        })
         : [];
     const rest =
       first.length < limit
         ? await this.prisma.merchantContent.findMany({
-            where: { ...where, AND: [{ merchantId: { notIn: trusted } }] },
-            include,
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            skip: Math.max(0, offset - priorityCount),
-            take: limit - first.length,
-          })
+          where: { ...where, AND: [{ merchantId: { notIn: trusted } }] },
+          include,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: Math.max(0, offset - priorityCount),
+          take: limit - first.length,
+        })
         : [];
     const rows = [...first, ...rest];
     const storyCounts =
       query.kind === 'STORY' && rows.length
         ? await this.prisma.merchantContent.groupBy({
-            by: ['merchantId'],
-            where: {
-              ...where,
-              kind: 'STORY',
-              merchantId: {
-                in: [...new Set(rows.map((row) => row.merchantId))],
-              },
+          by: ['merchantId'],
+          where: {
+            ...where,
+            kind: 'STORY',
+            merchantId: {
+              in: [...new Set(rows.map((row) => row.merchantId))],
             },
-            _count: { _all: true },
-          })
+          },
+          _count: { _all: true },
+        })
         : [];
     const counts = new Map(
       storyCounts.map((row) => [row.merchantId, row._count._all]),
@@ -171,16 +171,16 @@ export class MerchantService {
     const activeStories =
       query.kind === 'STORY' && rows.length
         ? await this.prisma.merchantContent.findMany({
-            where: {
-              ...where,
-              kind: 'STORY',
-              merchantId: {
-                in: [...new Set(rows.map((row) => row.merchantId))],
-              },
+          where: {
+            ...where,
+            kind: 'STORY',
+            merchantId: {
+              in: [...new Set(rows.map((row) => row.merchantId))],
             },
-            select: { id: true, merchantId: true },
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          })
+          },
+          select: { id: true, merchantId: true },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        })
         : [];
     const storyIds = new Map<string, string[]>();
     for (const story of activeStories) {
@@ -198,8 +198,8 @@ export class MerchantService {
           expiresAt:
             row.kind === 'STORY'
               ? new Date(
-                  row.createdAt.getTime() + 24 * 60 * 60 * 1000,
-                ).toISOString()
+                row.createdAt.getTime() + 24 * 60 * 60 * 1000,
+              ).toISOString()
               : null,
           activeStoryCount: counts.get(row.merchantId),
           activeStoryIds: storyIds.get(row.merchantId),
@@ -306,10 +306,10 @@ export class MerchantService {
           ...(dto.topic !== undefined ? { topic: dto.topic } : {}),
           ...(media
             ? {
-                mediaUrl: media.mediaUrl,
-                mediaType: media.mediaType,
-                mediaPublicId: media.publicId,
-              }
+              mediaUrl: media.mediaUrl,
+              mediaType: media.mediaType,
+              mediaPublicId: media.publicId,
+            }
             : {}),
         },
       });
@@ -408,13 +408,12 @@ export class MerchantService {
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    return [
-      ...offers.filter(
-        (offer) =>
-          offer.stockLimit === null || offer.unitsClaimed < offer.stockLimit,
-      ),
-      ...    ];
+    return offers.filter(
+      (offer) =>
+        offer.stockLimit === null || offer.unitsClaimed < offer.stockLimit,
+    );
   }
+
   async notifications(userId: string, query?: NotificationsQuery) {
     const [
       orders,
@@ -662,15 +661,15 @@ export class MerchantService {
       productId: id,
       ...(search
         ? {
-            OR: [
-              { comment: { contains: search, mode: 'insensitive' as const } },
-              {
-                user: {
-                  firstName: { contains: search, mode: 'insensitive' as const },
-                },
+          OR: [
+            { comment: { contains: search, mode: 'insensitive' as const } },
+            {
+              user: {
+                firstName: { contains: search, mode: 'insensitive' as const },
               },
-            ],
-          }
+            },
+          ],
+        }
         : {}),
     };
     const [items, stats, distribution, total] = await this.prisma.$transaction([
@@ -691,10 +690,10 @@ export class MerchantService {
           query.sort === 'recent'
             ? [{ createdAt: 'desc' }, { id: 'desc' }]
             : [
-                { rating: query.sort === 'highest' ? 'desc' : 'asc' },
-                { createdAt: 'desc' },
-                { id: 'desc' },
-              ],
+              { rating: query.sort === 'highest' ? 'desc' : 'asc' },
+              { createdAt: 'desc' },
+              { id: 'desc' },
+            ],
         skip: query.offset,
         take: query.limit,
       }),
@@ -821,9 +820,9 @@ export class MerchantService {
       );
     const previousMedia = file
       ? await this.prisma.productReview.findUnique({
-          where: { productId_userId: { productId: id, userId } },
-          select: { mediaPublicId: true, mediaType: true },
-        })
+        where: { productId_userId: { productId: id, userId } },
+        select: { mediaPublicId: true, mediaType: true },
+      })
       : null;
     const media = file ? await uploadMerchantMedia(file) : undefined;
     let saved: Pick<
@@ -848,10 +847,10 @@ export class MerchantService {
           comment: dto.comment.trim(),
           ...(media
             ? {
-                mediaUrl: media.mediaUrl,
-                mediaType: media.mediaType,
-                mediaPublicId: media.publicId,
-              }
+              mediaUrl: media.mediaUrl,
+              mediaType: media.mediaType,
+              mediaPublicId: media.publicId,
+            }
             : {}),
         },
         update: {
@@ -859,10 +858,10 @@ export class MerchantService {
           comment: dto.comment.trim(),
           ...(media
             ? {
-                mediaUrl: media.mediaUrl,
-                mediaType: media.mediaType,
-                mediaPublicId: media.publicId,
-              }
+              mediaUrl: media.mediaUrl,
+              mediaType: media.mediaType,
+              mediaPublicId: media.publicId,
+            }
             : {}),
         },
       });
