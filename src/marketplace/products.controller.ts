@@ -28,23 +28,12 @@ export class ProductsController {
     imageUrls: string[];
     videoUrl?: string | null;
     name: string;
-    promoEndsAt: Date | null;
-    promoPrice: number | null;
-    promoStartsAt: Date | null;
     unitPrice: number;
     _count?: {
       likes?: number;
       comments?: number;
     };
   }) {
-    const now = new Date();
-    const activeOffer = Boolean(
-      product.promoPrice &&
-      product.promoStartsAt &&
-      product.promoEndsAt &&
-      product.promoStartsAt <= now &&
-      product.promoEndsAt > now,
-    );
     return {
       detailTitle: product.name,
       id: product.id,
@@ -53,9 +42,6 @@ export class ProductsController {
       videoUrl: product.videoUrl,
       name: product.name,
       price: `₦${product.unitPrice.toLocaleString()}`,
-      salePrice: activeOffer
-        ? `₦${product.promoPrice?.toLocaleString()}`
-        : undefined,
       sku: productSku(product.id),
       likeCount: product._count?.likes ?? 0,
       commentCount: product._count?.comments ?? 0,

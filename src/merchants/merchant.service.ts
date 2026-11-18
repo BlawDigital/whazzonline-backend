@@ -1,9 +1,5 @@
 import type { ProductReview } from 'generated/prisma/client';
 import {
-  legacyProductOffer,
-  legacyPromotionWhere,
-} from '../vendors/legacy-product-offer';
-import {
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -412,57 +408,12 @@ export class MerchantService {
       orderBy: { createdAt: 'desc' },
       take: 100,
     });
-    const legacy = await this.prisma.product.findMany({
-      where: {
-        ...legacyPromotionWhere(now),
-        vendorProfile: {
-          setupCompleted: true,
-          user: { isActive: true },
-          ...(explore
-            ? userId
-              ? { userId: { not: userId } }
-              : {}
-            : { contacts: { some: { userId: userId! } } }),
-        },
-      },
-      select: {
-        id: true,
-        name: true,
-        status: true,
-        unitPrice: true,
-        quantity: true,
-        imageUrls: true,
-        category: true,
-        promoPrice: true,
-        promoStartsAt: true,
-        promoEndsAt: true,
-        vendorProfile: {
-          select: {
-            userId: true,
-            storeName: true,
-            logoUrl: true,
-            bannerUrl: true,
-            description: true,
-            city: true,
-            state: true,
-            category: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    });
     return [
       ...offers.filter(
         (offer) =>
           offer.stockLimit === null || offer.unitsClaimed < offer.stockLimit,
       ),
-      ...legacy.map(({ vendorProfile, ...product }) => ({
-        ...legacyProductOffer(product),
-        vendorProfile,
-        products: [{ product }],
-      })),
-    ];
+      ...    ];
   }
   async notifications(userId: string, query?: NotificationsQuery) {
     const [
@@ -471,7 +422,6 @@ export class MerchantService {
       reads,
       supportReplies,
       offers,
-      promotions,
       inventory,
     ] = await Promise.all([
       this.prisma.commerceOrder.findMany({
@@ -539,24 +489,6 @@ export class MerchantService {
       }),
       this.prisma.product.findMany({
         where: {
-          ...legacyPromotionWhere(new Date()),
-          vendorProfile: {
-            setupCompleted: true,
-            user: { isActive: true },
-            OR: [{ userId }, { contacts: { some: { userId } } }],
-          },
-        },
-        select: {
-          id: true,
-          name: true,
-          promoStartsAt: true,
-          vendorProfile: { select: { userId: true, storeName: true } },
-        },
-        orderBy: { promoStartsAt: 'desc' },
-        take: 100,
-      }),
-      this.prisma.product.findMany({
-        where: {
           status: 'ACTIVE',
           quantity: { lte: 5 },
           vendorProfile: { userId },
@@ -597,17 +529,6 @@ export class MerchantService {
         createdAt: offer.startsAt.toISOString(),
         merchantId: offer.vendorProfile.userId,
         offerId: offer.id,
-        read: false,
-      })),
-      ...promotions.map((product) => ({
-        id: `promotion:${product.id}:${product.promoStartsAt!.getTime()}`,
-        category: 'promotions',
-        type: 'promotion',
-        title: `${product.vendorProfile.storeName} · Promotion`,
-        body: `${product.name} is on promotion.`,
-        createdAt: product.promoStartsAt!.toISOString(),
-        merchantId: product.vendorProfile.userId,
-        productId: product.id,
         read: false,
       })),
       ...inventory.map((product) => ({

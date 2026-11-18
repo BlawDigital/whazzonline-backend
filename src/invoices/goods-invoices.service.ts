@@ -1530,15 +1530,7 @@ export class GoodsInvoicesService {
     const lines = dto.items.map((item) => {
       const p = products.find((p) => p.id === item.productId);
       if (!p) throw new BadRequestException('Select your own active products.');
-      const now = new Date(),
-        price =
-          p.promoPrice &&
-          p.promoStartsAt &&
-          p.promoEndsAt &&
-          p.promoStartsAt <= now &&
-          p.promoEndsAt > now
-            ? p.promoPrice
-            : p.unitPrice;
+      const price = p.unitPrice;
       return {
         productId: p.id,
         vendorId,

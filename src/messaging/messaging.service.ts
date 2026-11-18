@@ -349,15 +349,7 @@ export class MessagingService {
         );
       }
     }
-    const now = new Date();
-    const unitPrice =
-      product.promoPrice &&
-      product.promoStartsAt &&
-      product.promoEndsAt &&
-      product.promoStartsAt <= now &&
-      product.promoEndsAt > now
-        ? product.promoPrice
-        : product.unitPrice;
+    const unitPrice = product.unitPrice;
     return {
       productId: product.id,
       name: product.name,

@@ -105,14 +105,11 @@ async function seedProducts(profiles: Awaited<ReturnType<typeof seedStorefronts>
   for (const item of products) {
     const vendorProfileId = profiles[item.seller].id;
     const existing = await prisma.product.findFirst({ where: { vendorProfileId, name: item.name } });
-    const offer = products.indexOf(item) % 5 === 0;
     const data = {
       category: item.category, mainCategory: item.category, name: item.name,
       description: `Demo listing for ${item.name}. Photos are illustrative; confirm product details with the seller.`,
       unitPrice: item.price, quantity: item.category === 'Cars' ? 3 : 40,
       status: 'ACTIVE' as const, variants: [],
-      promoPrice: offer ? Math.round(item.price * 0.9) : null,
-      promoStartsAt: offer ? at(1) : null, promoEndsAt: offer ? at(-14) : null,
     };
     result.push(existing
       ? await prisma.product.update({ where: { id: existing.id }, data })

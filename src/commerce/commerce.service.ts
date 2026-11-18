@@ -29,21 +29,6 @@ function sameVariants(left: unknown, right: unknown) {
   return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
 }
 
-function activePromoPrice(product: {
-  promoEndsAt: Date | null;
-  promoPrice: number | null;
-  promoStartsAt: Date | null;
-}) {
-  const now = Date.now();
-  return product.promoPrice &&
-    product.promoStartsAt &&
-    product.promoEndsAt &&
-    product.promoStartsAt.getTime() <= now &&
-    product.promoEndsAt.getTime() > now
-    ? product.promoPrice
-    : null;
-}
-
 @Injectable()
 export class CommerceService {
   constructor(
@@ -229,8 +214,7 @@ export class CommerceService {
       throw new BadRequestException('The requested quantity is not available.');
     }
 
-    const promoPrice = activePromoPrice(product);
-    const unitPrice = promoPrice ?? product.unitPrice;
+    const unitPrice = product.unitPrice;
     const data = {
       deliveryAddress: dto.deliveryAddress,
       imageUri: variantImage(
@@ -240,7 +224,7 @@ export class CommerceService {
         dto.selectedSize,
       ),
       name: product.name,
-      originalPrice: promoPrice ? product.unitPrice : null,
+      originalPrice: null,
       productId: product.id,
       quantity: nextQuantity,
       selectedColor: dto.selectedColor,
@@ -367,8 +351,6 @@ export class CommerceService {
         );
       }
 
-      const promoPrice = activePromoPrice(product);
-
       return {
         sourceCartItemId: cartItem.id,
         deliveryAddress: dto.address.label,
@@ -379,7 +361,7 @@ export class CommerceService {
           cartItem.selectedSize,
         ),
         name: product.name,
-        originalPrice: promoPrice ? product.unitPrice : null,
+        originalPrice: null,
         productId: product.id,
         quantity,
         selectedColor: cartItem.selectedColor,
@@ -387,7 +369,7 @@ export class CommerceService {
         selectedVariants: cartItem.selectedVariants ?? {},
         sku: productSku(product.id),
         subtitle: cartItem.subtitle || product.category,
-        unitPrice: promoPrice ?? product.unitPrice,
+        unitPrice: product.unitPrice,
         vendorId: product.vendorProfile.userId,
         vendorName: product.vendorProfile.storeName,
       };
@@ -760,8 +742,6 @@ export class CommerceService {
           `${product.name} does not have enough stock.`,
         );
       }
-      const promoPrice = activePromoPrice(product);
-
       return {
         deliveryAddress: dto.address.label,
         imageUri: variantImage(
@@ -771,7 +751,7 @@ export class CommerceService {
           requested.selectedSize,
         ),
         name: product.name,
-        originalPrice: promoPrice ? product.unitPrice : null,
+        originalPrice: null,
         productId: product.id,
         quantity: requested.quantity,
         selectedColor: requested.selectedColor ?? null,
@@ -779,7 +759,7 @@ export class CommerceService {
         selectedVariants: requested.selectedVariants ?? {},
         sku: productSku(product.id),
         subtitle: product.category,
-        unitPrice: promoPrice ?? product.unitPrice,
+        unitPrice: product.unitPrice,
         vendorId: product.vendorProfile.userId,
         vendorName: product.vendorProfile.storeName,
       };

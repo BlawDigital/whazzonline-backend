@@ -1,9 +1,5 @@
 import { normalizeSpecifications } from '../common/product-options';
 import { Prisma } from 'generated/prisma/client';
-import {
-  legacyProductOffer,
-  legacyPromotionWhere,
-} from './legacy-product-offer';
 import { addMonths } from '../referrals/merchant-billing.service';
 import {
   BadRequestException,
@@ -14,8 +10,8 @@ import {
 import { PrismaService } from 'prisma/prisma.service';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { BulkVendorProductDto } from './dto/bulk-vendor-product.dto';
 import { storeCategories } from './store-categories';
-import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import {
   CreateDeliveryOfferType,
   CreateOfferDiscountType,
@@ -385,16 +381,6 @@ export class VendorsService {
     imageUrls: string[],
     videoUrl?: string,
   ) {
-    if (dto.promoPrice !== undefined && dto.promoPrice >= dto.unitPrice) {
-      throw new BadRequestException(
-        'Promo price must be lower than the actual price.',
-      );
-    }
-    if (dto.promoDurationHours !== undefined && dto.promoPrice === undefined) {
-      throw new BadRequestException(
-        'Add a promo price before choosing a duration.',
-      );
-    }
     await this.requireVendorUser(userId);
     const profile = await this.prisma.vendorProfile.findUnique({
       where: { userId },
@@ -452,47 +438,12 @@ export class VendorsService {
         name: dto.name,
         quantity: dto.quantity,
         specifications: normalizeSpecifications(dto.specifications),
+        status: dto.status ?? 'ACTIVE',
         subCategories: dto.subCategories,
         unitPrice: dto.unitPrice,
-        ...(dto.promoPrice !== undefined
-          ? {
-              promoPrice: dto.promoPrice,
-              promoStartsAt: new Date(),
-              promoEndsAt: new Date(
-                Date.now() + (dto.promoDurationHours ?? 24) * 3600000,
-              ),
-            }
-          : {}),
         variants: normalizedVariants,
         vendorProfileId: profile.id,
       },
-    });
-  }
-
-  async createProductOffer(
-    userId: string,
-    productId: string,
-    dto: CreateProductOfferDto,
-  ) {
-    await this.requireVendorUser(userId);
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, vendorProfile: { userId }, status: 'ACTIVE' },
-      select: { id: true, unitPrice: true },
-    });
-    if (!product) throw new NotFoundException('Product not found.');
-    if (dto.promoPrice >= product.unitPrice) {
-      throw new BadRequestException(
-        'Offer price must be lower than the actual price.',
-      );
-    }
-
-    const promoStartsAt = new Date();
-    const promoEndsAt = new Date(
-      promoStartsAt.getTime() + dto.durationHours * 60 * 60 * 1000,
-    );
-    return this.prisma.product.update({
-      where: { id: product.id },
-      data: { promoEndsAt, promoPrice: dto.promoPrice, promoStartsAt },
     });
   }
 
@@ -515,27 +466,18 @@ export class VendorsService {
       orderBy: { createdAt: 'desc' },
     });
     const now = new Date();
-    const legacy = await this.prisma.product.findMany({
-      where: { vendorProfileId: profile.id, ...legacyPromotionWhere(now) },
-    });
-    return [
-      ...offers.map((offer) => ({
-        ...offer,
-        status:
-          offer.status === 'DRAFT'
-            ? 'DRAFT'
-            : offer.startsAt > now
-              ? 'SCHEDULED'
-              : offer.endsAt <= now
-                ? 'ENDED'
-                : 'ACTIVE',
-        products: offer.products.map(({ product }) => product),
-      })),
-      ...legacy.map((product) => ({
-        ...legacyProductOffer(product),
-        products: [product],
-      })),
-    ];
+    return offers.map((offer) => ({
+      ...offer,
+      status:
+        offer.status === 'DRAFT'
+          ? 'DRAFT'
+          : offer.startsAt > now
+            ? 'SCHEDULED'
+            : offer.endsAt <= now
+              ? 'ENDED'
+              : 'ACTIVE',
+      products: offer.products.map(({ product }) => product),
+    }));
   }
 
   async createOffer(userId: string, dto: CreateOfferDto, draftId?: string) {
@@ -700,13 +642,6 @@ export class VendorsService {
                 throw new BadRequestException(
                   'A selected product already belongs to an offer during this time. Choose a different time or product.',
                 );
-              if (
-                isDiscount &&
-                products.some((p) => p.promoEndsAt && p.promoEndsAt > now)
-              )
-                throw new BadRequestException(
-                  'A selected product has an existing promotion. Wait until it ends before creating another discount.',
-                );
             }
             const data = {
               applicableLocations:
@@ -769,20 +704,6 @@ export class VendorsService {
                   },
                   include: { products: { include: { product: true } } },
                 }));
-            await Promise.all(
-              promoPrices.map(({ id, price }) =>
-                price === null || dto.stockLimit || dto.minimumOrderValue
-                  ? Promise.resolve()
-                  : transaction.product.update({
-                      where: { id },
-                      data: {
-                        promoEndsAt: endsAt,
-                        promoPrice: price,
-                        promoStartsAt: startsAt,
-                      },
-                    }),
-              ),
-            );
             return {
               ...offer,
               products: offer.products.map(({ product }) => product),
@@ -835,16 +756,6 @@ export class VendorsService {
     const product = await this.requireOwnedProduct(userId, productId);
     if (product.status === 'DELETED')
       throw new BadRequestException('Deleted products cannot be edited.');
-    if (
-      dto.unitPrice !== undefined &&
-      product.promoPrice &&
-      product.promoEndsAt &&
-      product.promoEndsAt > new Date() &&
-      dto.unitPrice <= product.promoPrice
-    )
-      throw new BadRequestException(
-        'Actual price must be higher than the active promo price.',
-      );
     const variants = dto.variants?.map((v) => {
       const options = normalizeSpecifications(v.options ?? {});
       if (
@@ -893,6 +804,52 @@ export class VendorsService {
       where: { id: productId },
       data: { ...fields, ...(variants ? { variants } : {}) },
     });
+  }
+
+  async bulkUpdateProducts(userId: string, dto: BulkVendorProductDto) {
+    await this.requireVendorUser(userId);
+    const profile = await this.prisma.vendorProfile.findUnique({
+      where: { userId },
+      select: { id: true, setupCompleted: true },
+    });
+    if (!profile) throw new NotFoundException('Vendor profile not found.');
+
+    const productIds = [...new Set(dto.productIds)];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, vendorProfileId: profile.id },
+      select: { id: true, status: true },
+    });
+    if (products.length !== productIds.length)
+      throw new NotFoundException('One or more products were not found.');
+    if (
+      dto.action !== 'DELETE' &&
+      products.some((product) => product.status === 'DELETED')
+    )
+      throw new BadRequestException('Deleted products cannot be updated.');
+    if (dto.action === 'PUBLISH' && !profile.setupCompleted)
+      throw new BadRequestException(
+        'Complete store setup before publishing a product.',
+      );
+
+    const data =
+      dto.action === 'PUBLISH'
+        ? { status: 'ACTIVE' as const }
+        : dto.action === 'UNPUBLISH'
+          ? { status: 'ARCHIVED' as const }
+          : dto.action === 'DRAFT'
+            ? { status: 'DRAFT' as const }
+            : dto.action === 'DELETE'
+              ? { status: 'DELETED' as const }
+              : {
+                  category: dto.category!,
+                  mainCategory: dto.mainCategory ?? dto.category!,
+                  subCategories: [dto.category!],
+                };
+    await this.prisma.product.updateMany({
+      where: { id: { in: productIds }, vendorProfileId: profile.id },
+      data,
+    });
+    return { ids: productIds, action: dto.action };
   }
 
   async archiveProduct(userId: string, productId: string) {

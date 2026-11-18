@@ -21,13 +21,13 @@ import {
 } from '@nestjs/platform-express';
 
 import { CreateVendorProductDto } from './dto/create-vendor-product.dto';
+import { BulkVendorProductDto } from './dto/bulk-vendor-product.dto';
 import { CreateVendorWithdrawalDto } from './dto/create-vendor-withdrawal.dto';
 import { StoreCommunityService } from './store-community.service';
 import {
   StoreCommunityQueryDto,
   ReviewVoteDto,
 } from './dto/store-community.dto';
-import { CreateProductOfferDto } from './dto/create-product-offer.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { SaveVendorBankDto } from './dto/save-vendor-bank.dto';
 import { SaveVendorProfileDto } from './dto/save-vendor-profile.dto';
@@ -149,12 +149,21 @@ export class VendorsController {
 
   @Post(':userId/products')
   @UseGuards(JwtAuthGuard)
-  @UseInterceptors(FileFieldsInterceptor([{ name: 'images', maxCount: 5 }, { name: 'video', maxCount: 1 }], productMediaUploadOptions))
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'images', maxCount: 5 },
+        { name: 'video', maxCount: 1 },
+      ],
+      productMediaUploadOptions,
+    ),
+  )
   async createProduct(
     @Req() request: AuthenticatedRequest,
     @Param('userId') userId: string,
     @Body() dto: CreateVendorProductDto,
-    @UploadedFiles() files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
+    @UploadedFiles()
+    files: { images?: Express.Multer.File[]; video?: Express.Multer.File[] },
   ) {
     const all = Object.values(files ?? {}).flat();
     if (request.user.sub !== userId) {
@@ -178,19 +187,6 @@ export class VendorsController {
       await removeProductUploads(all);
       throw error;
     }
-  }
-
-  @Post(':userId/products/:productId/offer')
-  @UseGuards(JwtAuthGuard)
-  createProductOffer(
-    @Req() request: AuthenticatedRequest,
-    @Param('userId') userId: string,
-    @Param('productId') productId: string,
-    @Body() dto: CreateProductOfferDto,
-  ) {
-    if (request.user.sub !== userId)
-      throw new ForbiddenException('You can only manage your own offers.');
-    return this.vendorsService.createProductOffer(userId, productId, dto);
   }
 
   @Get(':userId/offers')
@@ -248,6 +244,18 @@ export class VendorsController {
       await removeProductUploads(files);
       throw error;
     }
+  }
+
+  @Patch(':userId/products/bulk')
+  @UseGuards(JwtAuthGuard)
+  bulkUpdateProducts(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+    @Body() dto: BulkVendorProductDto,
+  ) {
+    if (request.user.sub !== userId)
+      throw new ForbiddenException('You can only manage your own products.');
+    return this.vendorsService.bulkUpdateProducts(userId, dto);
   }
 
   @Patch(':userId/products/:productId')
