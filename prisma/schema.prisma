@@ -74,6 +74,8 @@ model User {
   isActive             Boolean               @default(true)
   emailVerified        Boolean               @default(false)
   referralCode         String?               @unique
+  // The code this user signed up with (null when they joined without one).
+  referredByCode       String?
   referredBy           Referral?             @relation("Referee")
   merchantSubscription MerchantSubscription?
 
@@ -1014,6 +1016,21 @@ model GoodsInvoice {
   @@unique([orderId, vendorId])
   @@index([vendorId, status, createdAt])
   @@index([status, expiresAt])
+}
+
+// Order confirmation email: one per order, durable so retries never double-send.
+model OrderEmailDelivery {
+  id          String    @id @default(uuid())
+  createdAt   DateTime  @default(now())
+  orderId     String    @unique
+  destination String
+  status      String    @default("PENDING")
+  attempts    Int       @default(0)
+  attemptedAt DateTime?
+  sentAt      DateTime?
+  lastError   String?
+
+  @@index([status, createdAt])
 }
 
 model InvoiceDelivery {

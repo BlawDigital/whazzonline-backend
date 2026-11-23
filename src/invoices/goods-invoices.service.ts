@@ -1,3 +1,4 @@
+import { OrderConfirmationEmailService } from './order-confirmation-email.service';
 import { ReferralRewardsService } from '../referrals/referral-rewards.service';
 import { existingOrNewThread } from '../messaging/conversation-thread';
 import {
@@ -83,6 +84,8 @@ export class GoodsInvoicesService {
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly referralRewards?: ReferralRewardsService,
+    @Optional()
+    private readonly confirmationEmails?: OrderConfirmationEmailService,
   ) {}
   async walletOrder(userId: string, orderId: string) {
     const order = await this.prisma.commerceOrder.findFirst({
@@ -639,7 +642,7 @@ export class GoodsInvoicesService {
       }
     }
     try {
-      return await this.transaction(async (tx) => {
+      const created = await this.transaction(async (tx) => {
         const now = new Date();
         const products = await tx.product.findMany({
           where: { id: { in: input.lines.map((l) => l.productId) } },
@@ -878,6 +881,9 @@ export class GoodsInvoicesService {
           }),
         );
       });
+      // Not awaited: the confirmation email must never slow or fail checkout.
+      void this.confirmationEmails?.queue(created.id);
+      return created;
     } catch (error) {
       if (
         checkoutKey &&
