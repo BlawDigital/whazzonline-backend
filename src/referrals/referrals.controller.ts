@@ -64,6 +64,15 @@ export class ReferralsController {
     return this.referralsService.detail(userId, referralId);
   }
 
+  @Get('events')
+  events(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
+    this.assertOwner(request, userId);
+    return this.referralsService.events(userId);
+  }
+
   @Get('notifications')
   notifications(
     @Req() request: AuthenticatedRequest,

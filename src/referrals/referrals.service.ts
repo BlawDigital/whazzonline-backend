@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { ensureReferralCode, referralCodeCandidates } from './referral-code';
+import { recordReferralEvent } from './referral-events';
 import { PrismaService } from 'prisma/prisma.service';
 import { Prisma } from 'generated/prisma/client';
 
@@ -234,8 +235,14 @@ export class ReferralsService {
   }
   async resolve(code: string) {
     const user = await this.prisma.user.findFirst({
-      where: { referralCode: code, isActive: true, isVerified: true },
+      where: {
+        referralCode: { in: referralCodeCandidates(code) },
+        isActive: true,
+        isVerified: true,
+      },
       select: {
+        id: true,
+        referralCode: true,
         firstName: true,
         vendorProfile: { select: { storeName: true } },
       },
@@ -244,8 +251,12 @@ export class ReferralsService {
       throw new NotFoundException(
         'This referral invitation is invalid or no longer active.',
       );
+    await recordReferralEvent(this.prisma, {
+      referrerUserId: user.id,
+      type: 'LINK_OPENED',
+    });
     return {
-      code,
+      code: user.referralCode ?? code,
       name:
         user.vendorProfile?.storeName ??
         user.firstName ??
@@ -256,10 +267,8 @@ export class ReferralsService {
     let user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found.');
     if (!user.referralCode) {
-      await this.prisma.user.updateMany({
-        where: { id: userId, referralCode: null },
-        data: { referralCode: randomBytes(16).toString('hex') },
-      });
+      // Legacy accounts get a code the first time they open the referral screen.
+      await ensureReferralCode(this.prisma, userId);
       user = (await this.prisma.user.findUnique({ where: { id: userId } }))!;
     }
     const where = { referrerUserId: userId };
@@ -316,6 +325,7 @@ export class ReferralsService {
       }),
     ]);
     return {
+      referralCode: user.referralCode,
       referralLink: `${(process.env.FRONTEND_URL || 'https://whazzonline.com').replace(/\/$/, '')}/ref/${user.referralCode}`,
       eligible: user.isActive && user.isVerified,
       currency: 'NGN',
@@ -390,6 +400,13 @@ export class ReferralsService {
     });
     if (!referral) throw new NotFoundException('Referral not found.');
     return this.mapReferral(referral);
+  }
+  async events(userId: string) {
+    return this.prisma.referralEvent.findMany({
+      where: { referrerUserId: userId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
   }
   async notifications(userId: string) {
     const [items, unread] = await Promise.all([

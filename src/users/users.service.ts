@@ -97,13 +97,18 @@ export class UsersService {
 
   async updateUser(id: string, updateUserDto: UpdateUserDto) {
     await this.findUser(id);
+    // A referral code is permanent, whatever the request body contains.
+    const { referralCode: _locked, ...changes } = updateUserDto as typeof updateUserDto & {
+      referralCode?: string;
+    };
+    void _locked;
 
     const user = await this.prisma.user.update({
       where: {
         id,
       },
       data: {
-        ...updateUserDto,
+        ...changes,
         email: updateUserDto.email?.trim().toLowerCase(),
         phone: updateUserDto.phone
           ? normalizePhone(updateUserDto.phone)
