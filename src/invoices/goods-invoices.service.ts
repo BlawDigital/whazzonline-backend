@@ -1,3 +1,4 @@
+import { ReferralRewardsService } from '../referrals/referral-rewards.service';
 import { existingOrNewThread } from '../messaging/conversation-thread';
 import {
   storedVariants,
@@ -18,6 +19,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -78,7 +80,10 @@ const hash = (value: string) =>
   createHash('sha256').update(value).digest('hex');
 @Injectable()
 export class GoodsInvoicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly referralRewards?: ReferralRewardsService,
+  ) {}
   async walletOrder(userId: string, orderId: string) {
     const order = await this.prisma.commerceOrder.findFirst({
       where: { id: orderId, userId },
@@ -1498,6 +1503,11 @@ export class GoodsInvoicesService {
     if (!timingSafeEqual(expected, Buffer.from(signature, 'hex')))
       throw new UnauthorizedException('Invalid payment signature.');
     if (event.event === 'charge.success') await this.verify(invoice.id, null);
+    if (
+      event.event === 'refund.processed' ||
+      event.event === 'charge.dispute.create'
+    )
+      await this.referralRewards?.onOrderReversed(invoice.orderId, event.event);
     return { received: true };
   }
   async chatInvoice(

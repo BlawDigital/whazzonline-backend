@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Get,
   Param,
+  Post,
   Req,
   UseGuards,
   Query,
@@ -61,6 +62,24 @@ export class ReferralsController {
   ) {
     this.assertOwner(request, userId);
     return this.referralsService.detail(userId, referralId);
+  }
+
+  @Get('notifications')
+  notifications(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
+    this.assertOwner(request, userId);
+    return this.referralsService.notifications(userId);
+  }
+
+  @Post('notifications/read')
+  readNotifications(
+    @Req() request: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
+    this.assertOwner(request, userId);
+    return this.referralsService.markNotificationsRead(userId);
   }
 
   @Get('rewards')

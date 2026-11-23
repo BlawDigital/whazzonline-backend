@@ -359,10 +359,6 @@ export class AuthService {
       throw new BadRequestException(
         'This referral link is invalid or no longer active.',
       );
-    if (registerDto.referralCode && registrationType === 'BUYER')
-      throw new BadRequestException(
-        'This invitation is for a merchant account. Choose Seller or Business to continue.',
-      );
 
     // ============================================================
     // CREATE ACCOUNT
@@ -385,7 +381,9 @@ export class AuthService {
                   referrerUserId: referrer.id,
                   refereeName:
                     [firstName, lastName].filter(Boolean).join(' ') ||
-                    'New merchant',
+                    (registrationType === 'BUYER'
+                      ? 'New customer'
+                      : 'New merchant'),
                   rewardAmount: 0,
                 },
               },

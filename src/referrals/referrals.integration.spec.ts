@@ -210,14 +210,17 @@ databaseTests('referral database and payment integration', () => {
       status: 'PENDING',
       rewardAmount: 0,
     });
-    await expect(
-      auth.register({
-        email: `buyer-${randomUUID()}@example.com`,
-        password: 'test-password',
-        registrationType: 'BUYER',
-        referralCode: 'test-referral-invitation',
+    const buyer = await auth.register({
+      email: `buyer-${randomUUID()}@example.com`,
+      password: 'test-password',
+      registrationType: 'BUYER',
+      referralCode: 'test-referral-invitation',
+    });
+    expect(
+      await prisma.referral.findUnique({
+        where: { refereeUserId: buyer.user.id },
       }),
-    ).rejects.toThrow('merchant account');
+    ).toMatchObject({ referrerUserId: owner, status: 'PENDING' });
     await expect(referrals.resolve('missing-code')).rejects.toThrow('invalid');
   });
   it('credits the whole 4th, 17th and 30th payments exactly once', async () => {

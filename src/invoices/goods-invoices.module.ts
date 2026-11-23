@@ -5,6 +5,7 @@ import {
   OnModuleDestroy,
 } from '@nestjs/common';
 import { GoodsInvoicesService } from './goods-invoices.service';
+import { ReferralsModule } from '../referrals/referrals.module';
 import {
   GoodsInvoicesController,
   MerchantPaymentsController,
@@ -35,6 +36,7 @@ class InvoiceExpiry implements OnModuleInit, OnModuleDestroy {
   }
 }
 @Module({
+  imports: [ReferralsModule],
   controllers: [GoodsInvoicesController, MerchantPaymentsController],
   providers: [GoodsInvoicesService, InvoiceExpiry],
   exports: [GoodsInvoicesService],
