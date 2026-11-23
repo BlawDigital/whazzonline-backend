@@ -55,7 +55,10 @@ export class UpdateContentDto {
 }
 export class ProductReviewDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(5) rating!: number;
-  @IsString() @MinLength(3) @MaxLength(2000) comment!: string;
+  @IsOptional() @IsString() @MaxLength(2000) comment?: string;
+}
+export class ReportReviewDto {
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 export class AisleDto {
   @IsString() @MinLength(2) @MaxLength(100) name!: string;

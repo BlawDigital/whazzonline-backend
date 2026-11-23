@@ -20,6 +20,7 @@ describe('product review HTTP contract', () => {
     review: jest.fn().mockResolvedValue({ id: 'review' }),
     reviewViewer: jest.fn().mockResolvedValue({ canReview: true }),
     voteProductReview: jest.fn().mockResolvedValue({ saved: true }),
+    reportProductReview: jest.fn().mockResolvedValue({ reported: true }),
   };
   beforeAll(async () => {
     const module = await Test.createTestingModule({
@@ -113,6 +114,30 @@ describe('product review HTTP contract', () => {
       .send({ rating: 5, comment: 'Good bag', helpfulCount: 100 })
       .expect(400);
     expect(service.review).not.toHaveBeenCalled();
+  });
+  it('allows a rating without text and reports a review as the authenticated user', async () => {
+    const auth = `Bearer ${jwt.sign({ sub: 'reporter' })}`;
+    await request(app.getHttpServer())
+      .post('/merchants/products/product/reviews')
+      .set('Authorization', auth)
+      .send({ rating: 4 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/merchants/products/product/reviews/review/report')
+      .set('Authorization', auth)
+      .send({ reason: 'Spam', reporterId: 'other' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/merchants/products/product/reviews/review/report')
+      .set('Authorization', auth)
+      .send({ reason: 'Spam' })
+      .expect(201);
+    expect(service.reportProductReview).toHaveBeenLastCalledWith(
+      'reporter',
+      'product',
+      'review',
+      'Spam',
+    );
   });
   it('validates helpful votes and passes the authenticated voter rather than a supplied user id', async () => {
     const auth = `Bearer ${jwt.sign({ sub: 'voter' })}`;

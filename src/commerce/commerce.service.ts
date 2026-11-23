@@ -1,8 +1,10 @@
+import { ReferralRewardsService } from '../referrals/referral-rewards.service';
 import { variantImage } from '../common/product-options';
 import { GoodsInvoicesService } from '../invoices/goods-invoices.service';
 import {
   BadRequestException,
   Injectable,
+  Optional,
   NotFoundException,
 } from '@nestjs/common';
 
@@ -36,6 +38,7 @@ export class CommerceService {
     private readonly invoices: GoodsInvoicesService = new GoodsInvoicesService(
       prisma,
     ),
+    @Optional() private readonly referralRewards?: ReferralRewardsService,
   ) {}
 
   private mapItem(item: {
@@ -427,7 +430,7 @@ export class CommerceService {
   }
 
   async completeOrder(userId: string, id: string) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await lockOrder(tx, id);
       const order = await tx.commerceOrder.findFirst({
         where: { id, userId },
@@ -531,6 +534,8 @@ export class CommerceService {
         id,
       };
     });
+    await this.referralRewards?.onOrderDelivered(id);
+    return result;
   }
 
   async reportIssue(userId: string, dto: ReportOrderIssueDto) {

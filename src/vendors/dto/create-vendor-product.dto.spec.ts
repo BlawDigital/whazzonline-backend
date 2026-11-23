@@ -23,6 +23,27 @@ describe('CreateVendorProductDto', () => {
     });
   });
 
+  it('accepts a trimmed brand and a valid condition, and rejects others', async () => {
+    const base = {
+      category: 'Phones',
+      name: 'Phone',
+      quantity: '1',
+      unitPrice: '100',
+    };
+    const ok = plainToInstance(CreateVendorProductDto, {
+      ...base,
+      brand: '  Apple ',
+      condition: 'USED',
+    });
+    await expect(validate(ok)).resolves.toEqual([]);
+    expect(ok).toMatchObject({ brand: 'Apple', condition: 'USED' });
+    const bad = plainToInstance(CreateVendorProductDto, {
+      ...base,
+      condition: 'BROKEN',
+    });
+    expect(await validate(bad)).toHaveLength(1);
+  });
+
   it('rejects malformed variant JSON', async () => {
     const dto = plainToInstance(CreateVendorProductDto, {
       category: 'Fashion & Apparel',

@@ -81,6 +81,18 @@ export class CreateVendorProductDto {
   @IsString({ each: true })
   subCategories: string[] = [];
 
+  @IsOptional()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() || undefined : value,
+  )
+  @IsString()
+  @MaxLength(80)
+  brand?: string;
+
+  @IsOptional()
+  @IsIn(['NEW', 'USED', 'REFURBISHED'])
+  condition?: 'NEW' | 'USED' | 'REFURBISHED';
+
   @IsString()
   @IsNotEmpty()
   @MaxLength(160)

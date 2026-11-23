@@ -27,6 +27,7 @@ import {
   ContentDto,
   FeedDto,
   ProductReviewDto,
+  ReportReviewDto,
   ProductReviewsQuery,
   UpdateContentDto,
 } from './merchant.dto';
@@ -165,6 +166,19 @@ export class MerchantController {
       id,
       reviewId,
       dto.helpful ?? null,
+    );
+  }
+  @Post('products/:id/reviews/:reviewId/report') reviewReport(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('reviewId') reviewId: string,
+    @Body() dto: ReportReviewDto,
+  ) {
+    return this.service.reportProductReview(
+      req.user.sub,
+      id,
+      reviewId,
+      dto.reason,
     );
   }
   @Post('products/:id/reviews')
