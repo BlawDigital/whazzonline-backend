@@ -209,6 +209,8 @@ export class MarketplaceService {
             .filter(Boolean)
             .join(', '),
           name: product.name,
+          brand: product.brand,
+          condition: product.condition,
           price: `₦${product.unitPrice.toLocaleString()}`,
           salePrice: offerActive
             ? `₦${promoPrice?.toLocaleString()}`
