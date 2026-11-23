@@ -1,7 +1,8 @@
 # Database changes
 
 Everything that must exist in the database for the features built on
-`feature/combined-wwp-24-25-38-39` and `feature/WWP-35-45-48-referral-codes`.
+`feature/combined-wwp-24-25-38-39`, `feature/WWP-35-45-48-referral-codes` and
+`feature/WWP-20-21-34-orders-email-referral-link`.
 The SQL below is the exact output of `prisma migrate diff` between `main` and
 the current `prisma/schema.prisma` (PostgreSQL).
 
@@ -20,9 +21,11 @@ the current `prisma/schema.prisma` (PostgreSQL).
 | 9 | `ReferralAuditLog` | New table | WWP-52 audit trail |
 | 10 | `ReferralNotification` | New table | WWP-51 referrer notices |
 | 11 | `ReferralEvent` | New table | WWP-35 journey events |
+| 12 | `User.referredByCode` | New column | WWP-34 stores the code a user signed up with |
+| 13 | `OrderEmailDelivery` | New table (`orderId` unique: one email per order) | WWP-21 order confirmation email |
 
-No schema change was needed for WWP-22 (stock), WWP-45 to WWP-48 (referral code,
-link, copy) beyond the tables above: `User.referralCode` already exists and is unique.
+No schema change was needed for WWP-22 (stock), WWP-20 (seller order list and CSV), or
+WWP-45 to WWP-48 (referral code, link, copy) beyond the tables above: `User.referralCode` already exists and is unique.
 
 ## How to apply
 
@@ -56,6 +59,9 @@ ALTER TYPE "ReferralStatus" ADD VALUE 'QUALIFIED';
 ALTER TYPE "ReferralStatus" ADD VALUE 'REWARDED';
 ALTER TYPE "ReferralStatus" ADD VALUE 'INELIGIBLE';
 ALTER TYPE "ReferralStatus" ADD VALUE 'VOIDED';
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "referredByCode" TEXT;
 
 -- AlterTable
 ALTER TABLE "Referral" ADD COLUMN     "qualifiedAt" TIMESTAMP(3),
@@ -133,6 +139,21 @@ CREATE TABLE "ReferralNotification" (
 );
 
 -- CreateTable
+CREATE TABLE "OrderEmailDelivery" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "orderId" TEXT NOT NULL,
+    "destination" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "attemptedAt" TIMESTAMP(3),
+    "sentAt" TIMESTAMP(3),
+    "lastError" TEXT,
+
+    CONSTRAINT "OrderEmailDelivery_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "ProductReviewReport" (
     "id" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -169,6 +190,12 @@ CREATE INDEX "ReferralAuditLog_event_createdAt_idx" ON "ReferralAuditLog"("event
 
 -- CreateIndex
 CREATE INDEX "ReferralNotification_userId_createdAt_idx" ON "ReferralNotification"("userId", "createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "OrderEmailDelivery_orderId_key" ON "OrderEmailDelivery"("orderId");
+
+-- CreateIndex
+CREATE INDEX "OrderEmailDelivery_status_createdAt_idx" ON "OrderEmailDelivery"("status", "createdAt");
 
 -- CreateIndex
 CREATE INDEX "ProductReviewReport_reviewId_idx" ON "ProductReviewReport"("reviewId");
@@ -249,15 +276,29 @@ stored as an empty string.
 | `ReferralEvent` | Journey log: `LINK_OPENED`, `SIGNED_UP`, `QUALIFIED`, `REWARDED`, `INELIGIBLE`, `EXPIRED`, `VOIDED`. No foreign keys, so events survive deletions. |
 | `User.referralCode` (existing) | No change. New codes are 8 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`. Old 32-character codes remain valid. |
 
+### Order confirmation email (WWP-21)
+| Table | Purpose |
+|-------|---------|
+| `OrderEmailDelivery` | One row per order: `destination`, `status` (`PENDING`, `SENDING`, `SENT`, `FAILED`, `SKIPPED`), `attempts`, `sentAt`, `lastError`. The unique `orderId` makes a second send impossible. Failed sends are retried every minute, up to 5 attempts within 24 hours. |
+
+The email needs `RESEND_API_KEY` and `EMAIL_FROM` (already used for invoices) and
+optionally `FRONTEND_URL` for the support link.
+
+### Referral association (WWP-34)
+| Table | Purpose |
+|-------|---------|
+| `User.referredByCode` | The referral code the user signed up with. Stays `NULL` when they joined without one. The `Referral` row (unique `refereeUserId`) still links referrer and referee. |
+
 ## Rollback
 
 Drop in this order if you need to undo (data in these tables is lost):
 
 ```sql
-DROP TABLE "ProductReviewReport", "ReferralNotification", "ReferralAuditLog",
+DROP TABLE "OrderEmailDelivery", "ProductReviewReport", "ReferralNotification", "ReferralAuditLog",
            "ReferralEvent", "ReferralPayout", "ReferralProgramConfig";
 ALTER TABLE "Referral" DROP COLUMN "qualifiedAt", DROP COLUMN "qualifyingOrderId", DROP COLUMN "statusReason";
 ALTER TABLE "Product" DROP COLUMN "brand", DROP COLUMN "condition";
+ALTER TABLE "User" DROP COLUMN "referredByCode";
 DROP TYPE "ReferralPayoutStatus";
 DROP TYPE "ProductCondition";
 -- PostgreSQL cannot remove enum values. The four new "ReferralStatus" values stay;

@@ -361,6 +361,13 @@ export class AuthService {
       throw new BadRequestException(
         'This referral link is invalid or no longer active.',
       );
+    // A person cannot refer themselves with a second account or their own code.
+    if (
+      referrer &&
+      ((normalizedEmail && referrer.email === normalizedEmail) ||
+        (normalizedPhone && referrer.phone === normalizedPhone))
+    )
+      throw new BadRequestException('You cannot use your own referral code.');
 
     // ============================================================
     // CREATE ACCOUNT
@@ -378,6 +385,7 @@ export class AuthService {
         role,
         ...(referrer
           ? {
+              referredByCode: referrer.referralCode,
               referredBy: {
                 create: {
                   referrerUserId: referrer.id,
