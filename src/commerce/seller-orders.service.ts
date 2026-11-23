@@ -5,7 +5,9 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { ReferralRewardsService } from '../referrals/referral-rewards.service';
 import { PrismaService } from 'prisma/prisma.service';
 import { DeliveryProvider, type DeliveryLevel } from './delivery.provider';
 import { lockOrder, syncOrder, reconcileInvoicePayments } from './fulfillment';
@@ -51,6 +53,7 @@ export class SellerOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly deliveryProvider: DeliveryProvider,
+    @Optional() private readonly referralRewards?: ReferralRewardsService,
   ) {}
 
   capabilities() {
@@ -389,6 +392,8 @@ export class SellerOrdersService {
         if (vendor) await addOrderToThread(tx, order.userId, vendor.id, userId, id);
       }
     });
+    if (status === 'delivered')
+      await this.referralRewards?.onOrderDelivered(id);
     return this.detail(userId, id);
   }
 

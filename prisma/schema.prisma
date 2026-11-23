@@ -46,14 +46,14 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  firstName   String?
-  lastName    String?
-  dateOfBirth String?
-  address     String?
-  city        String?
-  state       String?
-  countryCode String?
-  avatarUrl   String?
+  firstName           String?
+  lastName            String?
+  dateOfBirth         String?
+  address             String?
+  city                String?
+  state               String?
+  countryCode         String?
+  avatarUrl           String?
   buyerOnboardingStep Int?
 
   email        String? @unique
@@ -61,7 +61,7 @@ model User {
 
   phone String? @unique
 
-  productComment ProductComment[]
+  productComment      ProductComment[]
   productCommentLikes ProductCommentLike[]
 
   authProvider AuthProvider?
@@ -77,27 +77,28 @@ model User {
   referredBy           Referral?             @relation("Referee")
   merchantSubscription MerchantSubscription?
 
-  notificationReads    SellerNotificationRead[]
-  notificationSettings SellerNotificationSettings?
-  vendorProfile        VendorProfile?
-  wallet               Wallet?
-  walletPinChallenges  WalletPinChallenge[]
-  referrals            Referral[]                  @relation("Referrer")
-  cartItems            CommerceCartItem[]
-  orders               CommerceOrder[]
-  orderIssues          OrderIssue[]
-  returnRequests       ReturnRequest[]
-  trustReviews         VendorTrustReview[]         @relation("TrustReviewer")
-  reviewVotes          VendorReviewVote[]
-  productLikes         ProductLike[]
-  merchantContacts     MerchantContact[]
-  productReviews       ProductReview[]
-  productReviewVotes   ProductReviewVote[]
-  productReviewReports ProductReviewReport[]
-  buyerConversations   Conversation[]              @relation("ConversationBuyer")
-  sentMessages         ChatMessage[]               @relation("MessageSender")
-  supportTickets       SupportTicket[]             @relation("SupportTicketOwner")
-  supportMessages      SupportMessage[]            @relation("SupportMessageSender")
+  notificationReads     SellerNotificationRead[]
+  notificationSettings  SellerNotificationSettings?
+  vendorProfile         VendorProfile?
+  wallet                Wallet?
+  walletPinChallenges   WalletPinChallenge[]
+  referrals             Referral[]                  @relation("Referrer")
+  referralNotifications ReferralNotification[]
+  cartItems             CommerceCartItem[]
+  orders                CommerceOrder[]
+  orderIssues           OrderIssue[]
+  returnRequests        ReturnRequest[]
+  trustReviews          VendorTrustReview[]         @relation("TrustReviewer")
+  reviewVotes           VendorReviewVote[]
+  productLikes          ProductLike[]
+  merchantContacts      MerchantContact[]
+  productReviews        ProductReview[]
+  productReviewVotes    ProductReviewVote[]
+  productReviewReports  ProductReviewReport[]
+  buyerConversations    Conversation[]              @relation("ConversationBuyer")
+  sentMessages          ChatMessage[]               @relation("MessageSender")
+  supportTickets        SupportTicket[]             @relation("SupportTicketOwner")
+  supportMessages       SupportMessage[]            @relation("SupportMessageSender")
 
   //User shopping intrests
   interests               Interest[]
@@ -149,17 +150,17 @@ model Wallet {
 }
 
 model WalletPinChallenge {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   channel     String
   destination String
   codeHash    String?
   providerId  String?
-  attempts    Int      @default(0)
+  attempts    Int       @default(0)
   expiresAt   DateTime
   consumedAt  DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   @@index([userId, createdAt])
 }
@@ -175,6 +176,7 @@ model WalletTransaction {
   type           WalletTransactionType
   status         WalletTransactionStatus @default(COMPLETED)
   referralReward ReferralReward?
+  referralPayout ReferralPayout?
 
   @@index([walletId, createdAt])
   @@index([status])
@@ -183,6 +185,18 @@ model WalletTransaction {
 enum ReferralStatus {
   COMPLETED
   PENDING
+  QUALIFIED
+  REWARDED
+  INELIGIBLE
+  VOIDED
+}
+
+enum ReferralPayoutStatus {
+  QUEUED
+  PROCESSING
+  PAID
+  CANCELLED
+  FAILED
 }
 
 model Referral {
@@ -198,8 +212,71 @@ model Referral {
   referee        User?            @relation("Referee", fields: [refereeUserId], references: [id], onDelete: SetNull)
   rewards        ReferralReward[]
 
+  // Order-based qualification (buyer referrals).
+  qualifiedAt       DateTime?
+  qualifyingOrderId String?                @unique
+  statusReason      String?
+  payout            ReferralPayout?
+  auditLogs         ReferralAuditLog[]
+  notifications     ReferralNotification[]
+
   @@index([referrerUserId, createdAt])
   @@index([status])
+}
+
+model ReferralProgramConfig {
+  id                      String   @id @default("default")
+  updatedAt               DateTime @updatedAt
+  enabled                 Boolean  @default(true)
+  minOrderValue           Int      @default(5000)
+  rewardAmount            Int      @default(500)
+  qualificationWindowDays Int      @default(30)
+  firstOrderOnly          Boolean  @default(true)
+}
+
+// One reward per referral: referralId is unique.
+model ReferralPayout {
+  id            String               @id @default(uuid())
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  referralId    String               @unique
+  referral      Referral             @relation(fields: [referralId], references: [id], onDelete: Restrict)
+  orderId       String
+  amount        Int
+  status        ReferralPayoutStatus @default(QUEUED)
+  attempts      Int                  @default(0)
+  nextAttemptAt DateTime             @default(now())
+  lastError     String?
+  transactionId String?              @unique
+  transaction   WalletTransaction?   @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+}
+
+model ReferralAuditLog {
+  id         String    @id @default(uuid())
+  createdAt  DateTime  @default(now())
+  referralId String?
+  referral   Referral? @relation(fields: [referralId], references: [id], onDelete: SetNull)
+  event      String
+  details    Json      @default("{}")
+
+  @@index([referralId, createdAt])
+  @@index([event, createdAt])
+}
+
+model ReferralNotification {
+  id         String    @id @default(uuid())
+  createdAt  DateTime  @default(now())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  referralId String?
+  referral   Referral? @relation(fields: [referralId], references: [id], onDelete: SetNull)
+  title      String
+  body       String
+  readAt     DateTime?
+
+  @@index([userId, createdAt])
 }
 
 model MerchantSubscription {
@@ -286,34 +363,34 @@ model VendorProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  storeName          String
-  category           String
-  subCategory        String
-  state              String
-  city               String
-  lga                String
-  address            String
-  landmark           String?
-  description        String
-  about              String?
-  storefrontDetails  Json               @default("{}")
-  socialLinks        Json               @default("[]")
-  representativeName String?
-  representativeRole String?
-  representativeBio  String?
+  storeName              String
+  category               String
+  subCategory            String
+  state                  String
+  city                   String
+  lga                    String
+  address                String
+  landmark               String?
+  description            String
+  about                  String?
+  storefrontDetails      Json               @default("{}")
+  socialLinks            Json               @default("[]")
+  representativeName     String?
+  representativeRole     String?
+  representativeBio      String?
   representativePhotoUrl String?
-  logoUrl            String?
-  bannerUrl          String?
-  cacUrl             String?
-  bankName           String?
-  bankCode           String?
-  bankAccountNumber  String?
-  bankAccountName    String?
-  sellerType         String?
-  termsAcceptedAt    DateTime?
-  submittedAt        DateTime?
-  reviewStatus       VendorReviewStatus @default(DRAFT)
-  setupCompleted     Boolean            @default(false)
+  logoUrl                String?
+  bannerUrl              String?
+  cacUrl                 String?
+  bankName               String?
+  bankCode               String?
+  bankAccountNumber      String?
+  bankAccountName        String?
+  sellerType             String?
+  termsAcceptedAt        DateTime?
+  submittedAt            DateTime?
+  reviewStatus           VendorReviewStatus @default(DRAFT)
+  setupCompleted         Boolean            @default(false)
 
   featuredProductId String?
 
@@ -373,21 +450,21 @@ model Product {
   comments       ProductComment[]
   category       String
   mainCategory   String?
-  subCategories  String[]         @default([])
+  subCategories  String[]          @default([])
   brand          String?
   condition      ProductCondition?
   name           String
   description    String?
-  specifications Json             @default("{}")
+  specifications Json              @default("{}")
   unitPrice      Int
   promoPrice     Int?
   promoStartsAt  DateTime?
   promoEndsAt    DateTime?
   quantity       Int
-  variants       Json             @default("[]")
+  variants       Json              @default("[]")
   imageUrls      String[]
   videoUrl       String?
-  status         ProductStatus    @default(ACTIVE)
+  status         ProductStatus     @default(ACTIVE)
 
   cartItems CommerceCartItem[]
   likes     ProductLike[]
@@ -861,13 +938,13 @@ model MerchantContent {
 }
 
 model ProductReview {
-  id            String              @id @default(uuid())
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  id            String                @id @default(uuid())
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
   productId     String
   userId        String
-  product       Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
-  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product       Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   rating        Int
   comment       String
   mediaUrl      String?
@@ -930,44 +1007,45 @@ model GoodsInvoice {
 }
 
 model InvoiceDelivery {
-  id            String       @id @default(uuid())
-  invoiceId     String
-  invoice       GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  channel       String
-  destination   String
-  status        String       @default("PENDING")
-  attemptedAt   DateTime?
-  sentAt        DateTime?
+  id          String       @id @default(uuid())
+  invoiceId   String
+  invoice     GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  channel     String
+  destination String
+  status      String       @default("PENDING")
+  attemptedAt DateTime?
+  sentAt      DateTime?
 
   @@unique([invoiceId, channel])
 }
 
 model InvoiceTransferReport {
-  evidence InvoiceTransferEvidence[]
-  id         String       @id @default(uuid())
-  invoiceId  String
-  invoice    GoodsInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
-  requestId  String
-  reference  String
-  remitterName String?
+  evidence       InvoiceTransferEvidence[]
+  id             String                    @id @default(uuid())
+  invoiceId      String
+  invoice        GoodsInvoice              @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  requestId      String
+  reference      String
+  remitterName   String?
   transferAmount Float?
-  note       String?
-  status     String       @default("PENDING")
-  createdAt  DateTime     @default(now())
-  reviewedAt DateTime?
-  reviewNote String?
+  note           String?
+  status         String                    @default("PENDING")
+  createdAt      DateTime                  @default(now())
+  reviewedAt     DateTime?
+  reviewNote     String?
 
   @@unique([invoiceId, requestId])
   @@index([invoiceId, status])
 }
 
 model InvoiceTransferEvidence {
-  id String @id @default(uuid())
+  id       String                @id @default(uuid())
   reportId String
-  report InvoiceTransferReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  name String
-  mime String
-  content Bytes
+  report   InvoiceTransferReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  name     String
+  mime     String
+  content  Bytes
+
   @@index([reportId])
 }
 
@@ -983,11 +1061,11 @@ model ProductComment {
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  content String
+  content  String
   parentId String?
-  parent ProductComment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies ProductComment[] @relation("CommentReplies")
-  likes ProductCommentLike[]
+  parent   ProductComment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  ProductComment[]     @relation("CommentReplies")
+  likes    ProductCommentLike[]
 
   @@index([parentId, createdAt])
   @@index([productId, createdAt])
@@ -1021,10 +1099,11 @@ model ProductReviewReport {
 
 model ProductCommentLike {
   commentId String
-  userId String
-  createdAt DateTime @default(now())
-  comment ProductComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  createdAt DateTime       @default(now())
+  comment   ProductComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@id([commentId, userId])
   @@index([userId])
 }

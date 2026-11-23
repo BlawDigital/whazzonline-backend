@@ -10,6 +10,7 @@ const include = {
       createdAt: true,
       phone: true,
       avatarUrl: true,
+      registrationType: true,
       vendorProfile: {
         select: {
           storeName: true,
@@ -34,8 +35,20 @@ const include = {
     orderBy: { createdAt: 'asc' as const },
     select: { createdAt: true, amount: true },
   },
+  payout: { select: { status: true, amount: true, updatedAt: true } },
 } satisfies Prisma.ReferralInclude;
+
+export const referralStatusLabels: Record<string, string> = {
+  PENDING: 'Joined',
+  QUALIFIED: 'Qualified',
+  REWARDED: 'Reward Sent',
+  COMPLETED: 'Reward Sent',
+  INELIGIBLE: 'Ineligible',
+  VOIDED: 'Voided',
+};
 type ReferralRecord = Prisma.ReferralGetPayload<{ include: typeof include }>;
+export type ReferralStatusFilter =
+  'COMPLETED' | 'PENDING' | 'QUALIFIED' | 'REWARDED' | 'INELIGIBLE' | 'VOIDED';
 export const referralRules = {
   eligibility: 'Open to all active users with a verified account.',
   steps: [
@@ -91,7 +104,79 @@ export class ReferralsService {
     const activated =
       user?.merchantSubscription?.trialStartedAt ??
       (profile?.setupCompleted ? profile.submittedAt : null);
+    const buyer = user?.registrationType === 'BUYER';
+    const failed = ['INELIGIBLE', 'VOIDED'].includes(referral.status);
+    const base = {
+      kind: buyer ? ('BUYER' as const) : ('MERCHANT' as const),
+      statusLabel: referralStatusLabels[referral.status] ?? referral.status,
+      failureReason: failed ? referral.statusReason : null,
+      qualifiedAt: referral.qualifiedAt?.toISOString() ?? null,
+      payoutStatus: referral.payout?.status ?? null,
+    };
+    if (buyer) {
+      const rewarded = ['REWARDED', 'COMPLETED'].includes(referral.status);
+      const qualified = !!referral.qualifiedAt;
+      const step = (
+        id: string,
+        label: string,
+        timestamp: Date | null | undefined,
+        current: boolean,
+        description?: string | null,
+      ) => ({
+        ...milestone(id, label, timestamp, current, description ?? undefined),
+        state:
+          failed && !timestamp
+            ? 'failed'
+            : milestone(id, label, timestamp, current).state,
+      });
+      return {
+        ...base,
+        id: referral.id,
+        refereeName: referral.refereeName,
+        createdAt: referral.createdAt.toISOString(),
+        completedAt: referral.completedAt?.toISOString() ?? null,
+        status: referral.status,
+        rewardAmount: referral.rewardAmount,
+        legacy: false,
+        paidPayments: 0,
+        nextRewardPayment: 0,
+        vendor: {
+          id: user?.id ?? null,
+          name: referral.refereeName,
+          avatarUrl: user?.avatarUrl ?? null,
+          phone: user?.phone ?? null,
+        },
+        progress: [
+          step('joined', 'Joined Whazzonline', referral.createdAt, false),
+          step(
+            'qualified',
+            'First Qualifying Purchase',
+            referral.qualifiedAt,
+            !qualified && !failed,
+            qualified
+              ? null
+              : failed
+                ? (referral.statusReason ?? 'Did not qualify.')
+                : 'Waiting for a delivered order.',
+          ),
+          step(
+            'reward',
+            'Reward Sent',
+            rewarded
+              ? (referral.completedAt ?? referral.payout?.updatedAt)
+              : null,
+            qualified && !rewarded && !failed,
+            rewarded
+              ? null
+              : qualified
+                ? 'Reward is being processed.'
+                : undefined,
+          ),
+        ],
+      };
+    }
     return {
+      ...base,
       id: referral.id,
       refereeName: profile?.storeName ?? referral.refereeName,
       createdAt: referral.createdAt.toISOString(),
@@ -178,47 +263,67 @@ export class ReferralsService {
       user = (await this.prisma.user.findUnique({ where: { id: userId } }))!;
     }
     const where = { referrerUserId: userId };
-    const [referrals, wallet, total, successful, thisWeek, last, rewards] =
-      await Promise.all([
-        compact
-          ? Promise.resolve([])
-          : this.prisma.referral.findMany({
-              where,
-              include,
-              orderBy: { createdAt: 'desc' },
-            }),
-        this.prisma.wallet.findUnique({ where: { userId } }),
-        this.prisma.referral.count({ where }),
-        this.prisma.referral.count({
-          where: { ...where, status: 'COMPLETED' },
-        }),
-        this.prisma.referral.count({
-          where: {
-            ...where,
-            createdAt: { gte: new Date(Date.now() - 7 * 86400000) },
-          },
-        }),
-        this.prisma.referral.findFirst({
-          where,
-          orderBy: { createdAt: 'desc' },
-          select: { createdAt: true },
-        }),
-        this.prisma.walletTransaction.aggregate({
-          where: {
-            wallet: { userId },
-            type: 'REFERRAL_BONUS',
-            status: 'COMPLETED',
-          },
-          _sum: { amount: true },
-        }),
-      ]);
+    const [
+      referrals,
+      wallet,
+      total,
+      successful,
+      thisWeek,
+      last,
+      rewards,
+      qualified,
+      ineligible,
+    ] = await Promise.all([
+      compact
+        ? Promise.resolve([])
+        : this.prisma.referral.findMany({
+            where,
+            include,
+            orderBy: { createdAt: 'desc' },
+          }),
+      this.prisma.wallet.findUnique({ where: { userId } }),
+      this.prisma.referral.count({ where }),
+      this.prisma.referral.count({
+        where: { ...where, status: { in: ['COMPLETED', 'REWARDED'] } },
+      }),
+      this.prisma.referral.count({
+        where: {
+          ...where,
+          createdAt: { gte: new Date(Date.now() - 7 * 86400000) },
+        },
+      }),
+      this.prisma.referral.findFirst({
+        where,
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+      this.prisma.walletTransaction.aggregate({
+        where: {
+          wallet: { userId },
+          type: 'REFERRAL_BONUS',
+          status: 'COMPLETED',
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.referral.count({
+        where: {
+          ...where,
+          status: { in: ['QUALIFIED', 'REWARDED', 'COMPLETED'] },
+        },
+      }),
+      this.prisma.referral.count({
+        where: { ...where, status: { in: ['INELIGIBLE', 'VOIDED'] } },
+      }),
+    ]);
     return {
       referralLink: `${(process.env.FRONTEND_URL || 'https://whazzonline.com').replace(/\/$/, '')}/ref/${user.referralCode}`,
       eligible: user.isActive && user.isVerified,
       currency: 'NGN',
       summary: {
-        pending: total - successful,
+        pending: total - successful - ineligible,
         successful,
+        qualified,
+        ineligible,
         total,
         totalRewards: rewards._sum.amount ?? 0,
         thisWeek,
@@ -235,14 +340,17 @@ export class ReferralsService {
       page?: number;
       pageSize?: number;
       q?: string;
-      status?: 'COMPLETED' | 'PENDING';
+      status?: ReferralStatusFilter;
     },
   ) {
     const page = query.page ?? 1,
       pageSize = query.pageSize ?? 10;
     const where: Prisma.ReferralWhereInput = {
       referrerUserId: userId,
-      status: query.status,
+      status:
+        query.status === 'REWARDED'
+          ? { in: ['REWARDED', 'COMPLETED'] }
+          : query.status,
       ...(query.q
         ? {
             OR: [
@@ -282,6 +390,26 @@ export class ReferralsService {
     });
     if (!referral) throw new NotFoundException('Referral not found.');
     return this.mapReferral(referral);
+  }
+  async notifications(userId: string) {
+    const [items, unread] = await Promise.all([
+      this.prisma.referralNotification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      this.prisma.referralNotification.count({
+        where: { userId, readAt: null },
+      }),
+    ]);
+    return { items, unread };
+  }
+  async markNotificationsRead(userId: string) {
+    await this.prisma.referralNotification.updateMany({
+      where: { userId, readAt: null },
+      data: { readAt: new Date() },
+    });
+    return { read: true };
   }
   async rewardHistory(userId: string) {
     return this.prisma.walletTransaction.findMany({
