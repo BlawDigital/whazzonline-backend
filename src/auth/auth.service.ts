@@ -1,3 +1,5 @@
+import { ensureReferralCode, referralCodeCandidates } from '../referrals/referral-code';
+import { recordReferralEvent } from '../referrals/referral-events';
 import {
   BadRequestException,
   ConflictException,
@@ -349,7 +351,7 @@ export class AuthService {
     const referrer = registerDto.referralCode
       ? await this.prisma.user.findFirst({
           where: {
-            referralCode: registerDto.referralCode,
+            referralCode: { in: referralCodeCandidates(registerDto.referralCode) },
             isActive: true,
             isVerified: true,
           },
@@ -399,6 +401,21 @@ export class AuthService {
         emailVerified: Boolean(normalizedEmail),
       },
     });
+
+    // The account is verified at creation, so it gets its permanent code now.
+    await ensureReferralCode(this.prisma, user.id);
+    if (referrer) {
+      const referral = await this.prisma.referral.findUnique({
+        where: { refereeUserId: user.id },
+        select: { id: true },
+      });
+      await recordReferralEvent(this.prisma, {
+        referrerUserId: referrer.id,
+        referralId: referral?.id,
+        type: 'SIGNED_UP',
+        metadata: { registrationType },
+      });
+    }
 
     // ============================================================
     // GENERATE LOGIN TOKEN

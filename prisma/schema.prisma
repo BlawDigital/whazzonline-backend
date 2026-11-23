@@ -253,6 +253,20 @@ model ReferralPayout {
   @@index([status, nextAttemptAt])
 }
 
+// Journey events (link opened, signed up, qualified, rewarded ...).
+model ReferralEvent {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  referrerUserId String
+  referralId     String?
+  type           String
+  metadata       Json     @default("{}")
+
+  @@index([referrerUserId, createdAt])
+  @@index([referralId, createdAt])
+  @@index([type, createdAt])
+}
+
 model ReferralAuditLog {
   id         String    @id @default(uuid())
   createdAt  DateTime  @default(now())

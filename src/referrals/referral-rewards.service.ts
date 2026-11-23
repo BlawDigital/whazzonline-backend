@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { Prisma } from 'generated/prisma/client';
+import { recordReferralEvent } from './referral-events';
 
 export type ReferralRules = {
   enabled: boolean;
@@ -221,6 +222,12 @@ export class ReferralRewardsService implements OnModuleInit, OnModuleDestroy {
         orderId,
         reason: verdict.reason,
       });
+      await recordReferralEvent(this.prisma, {
+        referrerUserId: referral.referrerUserId,
+        referralId: referral.id,
+        type: 'INELIGIBLE',
+        metadata: { orderId, reason: verdict.reason },
+      });
       await this.notify(
         referral.referrerUserId,
         referral.id,
@@ -258,6 +265,12 @@ export class ReferralRewardsService implements OnModuleInit, OnModuleDestroy {
           { orderId, payoutId: payout.id, amount: rules.rewardAmount },
           tx,
         );
+        await recordReferralEvent(tx, {
+          referrerUserId: referral.referrerUserId,
+          referralId: referral.id,
+          type: 'QUALIFIED',
+          metadata: { orderId, amount: rules.rewardAmount },
+        });
         return payout.id;
       });
     } catch (error) {
@@ -343,6 +356,12 @@ export class ReferralRewardsService implements OnModuleInit, OnModuleDestroy {
           { payoutId, amount: payout.amount },
           tx,
         );
+        await recordReferralEvent(tx, {
+          referrerUserId: payout.referral.referrerUserId,
+          referralId: payout.referralId,
+          type: 'REWARDED',
+          metadata: { amount: payout.amount },
+        });
         return payout;
       });
       if (rewardedFor)
@@ -407,6 +426,12 @@ export class ReferralRewardsService implements OnModuleInit, OnModuleDestroy {
         { orderId, cause, payoutStatus: referral.payout?.status ?? null },
         tx,
       );
+      await recordReferralEvent(tx, {
+        referrerUserId: referral.referrerUserId,
+        referralId: referral.id,
+        type: 'VOIDED',
+        metadata: { orderId, cause },
+      });
     });
     await this.notify(
       referral.referrerUserId,
@@ -459,6 +484,12 @@ export class ReferralRewardsService implements OnModuleInit, OnModuleDestroy {
       });
       if (!claimed.count) continue;
       await this.audit(referral.id, 'EXPIRED', { reason });
+      await recordReferralEvent(this.prisma, {
+        referrerUserId: referral.referrerUserId,
+        referralId: referral.id,
+        type: 'EXPIRED',
+        metadata: { reason },
+      });
       await this.notify(
         referral.referrerUserId,
         referral.id,
